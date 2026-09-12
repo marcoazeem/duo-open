@@ -1,3 +1,32 @@
+# Fold 7 build
+
+Local fork of [marcoazeem/duo-open](https://github.com/marcoazeem/duo-open).
+Installs as **Duo Open Fold 7** (`com.duoopen.fold7`) alongside the original.
+Enable just the Fold 7 accessibility service to avoid two competing effects.
+
+Changes:
+- Independent overlay sessions for Samsung inner and cover displays, including display-off cleanup.
+- In concurrent mode, the cover uses a center-cropped copy of the current inner snapshot; both effects share that capture. There is no live app task on Samsung's concurrent cover.
+- Hinge smoothing reduced from 45 ms to 20 ms, shorter fades, demo starts when capture completes, and the inner effect remains eligible up to 170 degrees.
+- Shader bindings and stable uniforms are reused. Cancelled frame callbacks cannot restart old animations.
+- Capture generations reject old callbacks; fading overlays and pending demo callbacks are removed on panel changes.
+
+The optional [device-local display bridge](tools/fold-bridge.md) enables Samsung concurrent mode while folding. It requires an ADB-started shell process; the APK cannot obtain the privileged display permission itself. It releases the override at rest, on inactivity/screen-off, when the service is disabled, and on process death. Restart the bridge after a phone reboot. The app works with the normal panel handoff when the bridge is absent.
+
+Build with JDK 21 (bytecode targets Java 17) and Android SDK 35:
+
+```sh
+ANDROID_HOME=/path/to/android-sdk bash gradlew assembleDebug lintDebug
+python3 tools/tests/run_tilt_follower_test.py
+ANDROID_HOME=/path/to/android-sdk bash tools/build-fold-bridge.sh
+```
+
+Device verification on SM-F966U1 / Android 16, 2026-09-12: both physical displays ON, overlays attached to display IDs 0 and 1 in a simultaneous demo, both overlays removed after completion, state restored to physical OPENED. Shared demo capture: inner 13 ms, cover 23 ms total; measured updated cold launch 455 ms. These are individual observations, not a before/after benchmark. Physical fold feel still needs operator validation.
+
+Original upstream documentation follows.
+
+---
+
 # Duo Open
 
 The iPhone "Duo" frosted-glass fold, playing system-wide on a book-style

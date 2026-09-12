@@ -1,7 +1,7 @@
 <resources>
-    <string name="app_name">Duo Open</string>
-    <string name="wallpaper_name">Duo Open</string>
+    <string name="app_name">Duo Open Fold 7</string>
+    <string name="wallpaper_name">Duo Open Fold 7</string>
     <string name="wallpaper_description">Frosted-glass fold that settles into focus as you unfold.</string>
-    <string name="accessibility_name">Duo Open full-screen fold</string>
+    <string name="accessibility_name">Duo Open Fold 7 full-screen fold</string>
     <string name="accessibility_description">Plays the frosted-glass fold over the whole screen when you open the phone. Takes one screenshot per unfold to draw the effect; nothing is stored or sent anywhere.</string>
 </resources>

@@ -60,6 +60,8 @@ class FoldOverlayView(
         fold.scaleX = renderScale
         fold.scaleY = renderScale
         fold.setLayerType(LAYER_TYPE_HARDWARE, null)
+        // Start on the sharp path even before the first sensor update.
+        fold.visibility = INVISIBLE
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -84,7 +86,9 @@ class FoldOverlayView(
         private val matrix = Matrix()
 
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-            matrix.setScale(w / snapshot.width.toFloat(), h / snapshot.height.toFloat())
+            val scale = maxOf(w / snapshot.width.toFloat(), h / snapshot.height.toFloat())
+            matrix.setScale(scale, scale)
+            matrix.postTranslate((w - snapshot.width * scale) / 2f, (h - snapshot.height * scale) / 2f)
             shader.setLocalMatrix(matrix)
             paint.shader = shader
         }
@@ -108,6 +112,16 @@ class FoldOverlayView(
         private val matrix = Matrix()
 
         var config: DuoConfig = DuoSettings.config.value
+            set(value) {
+                if (field != value) {
+                    field = value
+                    uniformsDirty = true
+                    invalidate()
+                }
+            }
+
+        private var uniformsDirty = true
+        private var previousLine: FoldLine? = null
 
         var tilt = 0f
             set(value) {
@@ -118,8 +132,14 @@ class FoldOverlayView(
             }
 
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-            matrix.setScale(w / snapshot.width.toFloat(), h / snapshot.height.toFloat())
+            val scale = maxOf(w / snapshot.width.toFloat(), h / snapshot.height.toFloat())
+            matrix.setScale(scale, scale)
+            matrix.postTranslate((w - snapshot.width * scale) / 2f, (h - snapshot.height * scale) / 2f)
             image.setLocalMatrix(matrix)
+            // Binding snapshots the child's local matrix, so refresh after resize.
+            shader?.setInputShader("content", image)
+            paint.shader = shader ?: image
+            uniformsDirty = true
         }
 
         override fun onDraw(canvas: Canvas) {
@@ -128,13 +148,15 @@ class FoldOverlayView(
             if (w <= 1f || h <= 1f) return
             canvas.drawColor(Color.BLACK)
             val fold = shader
-            if (fold == null) {
-                paint.shader = image
-            } else {
+            if (fold != null) {
                 val line = foldLine?.invoke(w, h, config) ?: DuoShader.centeredFold(w, h, config.foldSplitsLong)
-                DuoShader.setUniforms(fold, w, h, tilt, config, pxPerMm, line)
-                fold.setInputShader("content", image)
-                paint.shader = fold
+                if (uniformsDirty || line != previousLine) {
+                    DuoShader.setUniforms(fold, w, h, tilt, config, pxPerMm, line)
+                    previousLine = line
+                    uniformsDirty = false
+                } else {
+                    fold.setFloatUniform("tiltDegrees", tilt)
+                }
             }
             canvas.drawRect(0f, 0f, w, h, paint)
         }
