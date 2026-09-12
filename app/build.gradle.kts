@@ -18,12 +18,12 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.duoopen"
+        applicationId = "com.duoopen.fold7"
         // AGSL RuntimeShader needs API 33 (OnePlus Open ships Android 13+).
         minSdk = 33
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1-fold7"
     }
 
     signingConfigs {
@@ -55,7 +55,8 @@ android {
 }
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(21)
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 
 dependencies {

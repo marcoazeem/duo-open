@@ -21,6 +21,7 @@ class TiltFollower(private val onFrame: (tilt: Float) -> Unit) : Choreographer.F
 
     private var scheduled = false
     private var lastFrameNanos = 0L
+    private var generation = 0L
 
     fun setTarget(tilt: Float) {
         target = tilt
@@ -35,9 +36,10 @@ class TiltFollower(private val onFrame: (tilt: Float) -> Unit) : Choreographer.F
     }
 
     fun cancel() {
+        generation++
+        lastFrameNanos = 0L
         if (!scheduled) return
         scheduled = false
-        lastFrameNanos = 0L
         Choreographer.getInstance().removeFrameCallback(this)
     }
 
@@ -48,6 +50,7 @@ class TiltFollower(private val onFrame: (tilt: Float) -> Unit) : Choreographer.F
     }
 
     override fun doFrame(frameTimeNanos: Long) {
+        val frameGeneration = generation
         scheduled = false
         val dt = if (lastFrameNanos == 0L) 1f / 60f
         else ((frameTimeNanos - lastFrameNanos) / 1e9f).coerceIn(0f, 0.1f)
@@ -57,10 +60,15 @@ class TiltFollower(private val onFrame: (tilt: Float) -> Unit) : Choreographer.F
         if (abs(target - current) < 0.02f) current = target
 
         onFrame(current)
+        // onFrame may dismiss the overlay and cancel or snap this follower.
+        // Do not resurrect it after its owner has disposed of it.
+        if (generation != frameGeneration) return
         if (current != target) schedule() else lastFrameNanos = 0L
     }
 
     companion object {
-        const val DEFAULT_TAU_S = 0.045f
+        // Follow physical motion within a few display frames; timed preview
+        // animations can still opt into their own, slower time constant.
+        const val DEFAULT_TAU_S = 0.020f
     }
 }
