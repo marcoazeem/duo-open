@@ -13,6 +13,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.DuoOpen">
 
+        <provider
+            android:name=".settings.DisplayBridgeProvider"
+            android:authorities="${applicationId}.displaybridge"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density"

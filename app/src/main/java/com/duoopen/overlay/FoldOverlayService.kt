@@ -149,7 +149,11 @@ class FoldOverlayService : AccessibilityService() {
                 val o = overlay ?: return
                 if (o.tilt < DuoShader.FLAT_EPSILON) return
                 if (!demoRunning && SystemClock.uptimeMillis() - lastHingeMoveMs >= SETTLE_TIMEOUT_MS) {
-                    dismiss(fadeMs = FADE_OUT_STALLED_MS)
+                    if (isConcurrentSecondary()) {
+                        // Samsung gives this panel no app task underneath. Removing
+                        // its snapshot would make an awake display appear switched off.
+                        follower?.setTarget(0f)
+                    } else dismiss(fadeMs = FADE_OUT_STALLED_MS)
                 } else {
                     handler.postDelayed(this, 100)
                 }
@@ -166,6 +170,9 @@ class FoldOverlayService : AccessibilityService() {
 
         private fun defaultDisplay(): Display? = displayManager.getDisplay(displayId)
 
+        private fun isConcurrentSecondary(): Boolean =
+            displayId == 1 && displayManager.getDisplay(0)?.state == Display.STATE_ON
+
         private fun currentTilt(): Float =
             DuoShader.tiltFor(hinge.lastAngle, DuoSettings.config.value, innerPanel)
 
@@ -174,11 +181,15 @@ class FoldOverlayService : AccessibilityService() {
             evaluate()
             val tilt = DuoShader.tiltFor(angle, DuoSettings.config.value, innerPanel)
             if (timedResolve || demoRunning) return
-            if (tilt < DuoShader.FLAT_EPSILON && phase == Phase.SHOWING && !demoRunning) {
+            if (tilt < DuoShader.FLAT_EPSILON && phase == Phase.SHOWING && !demoRunning && !isConcurrentSecondary()) {
                 // At rest: drop the overlay now rather than easing the last degrees.
                 dismiss(fadeMs = FADE_OUT_FLAT_MS)
             } else {
                 follower?.setTarget(tilt)
+                if (phase == Phase.SHOWING && isConcurrentSecondary()) {
+                    handler.removeCallbacks(settleCheck)
+                    handler.postDelayed(settleCheck, SETTLE_TIMEOUT_MS)
+                }
             }
         }
 
@@ -430,7 +441,7 @@ class FoldOverlayService : AccessibilityService() {
             }
             follower = TiltFollower { t ->
                 view.tilt = t
-                if (t < DuoShader.FLAT_EPSILON && !demoRunning) dismiss(fadeMs = FADE_OUT_FLAT_MS)
+                if (t < DuoShader.FLAT_EPSILON && !demoRunning && !isConcurrentSecondary()) dismiss(fadeMs = FADE_OUT_FLAT_MS)
             }.also { it.snap(startTilt) }
             lastHingeMoveMs = SystemClock.uptimeMillis()
             timedResolve = timed

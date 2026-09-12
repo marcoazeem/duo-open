@@ -14,59 +14,78 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.io.RandomAccessFile;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.nio.channels.FileLock;
 
 /** Shell-only, device-local bridge. Never writes global settings or holds a wakelock. */
 public final class FoldDisplayBridge {
     static final class Policy {
         float angle = Float.NaN;
-        float motionAngle = Float.NaN;
-        long lastMotion = -1;
+        int sessionState = -1;
         void sample(float value, long now) {
-            if (!Float.isFinite(value) || value < 0 || value > 180) {
-                angle = Float.NaN;
-                lastMotion = -1;
-                return;
-            }
-            angle = value;
-            if (Float.isNaN(motionAngle)) motionAngle = value;
-            if (Math.abs(value - motionAngle) >= 0.5f) {
-                lastMotion = now;
-                motionAngle = value;
-            }
+            if (Float.isFinite(value) && value >= 0 && value <= 180) angle = value;
         }
-        boolean wantsConcurrent(long now, boolean interactive) {
-            return interactive && angle > 3 && angle < 177 && lastMotion >= 0
-                    && now - lastMotion < 1500;
+        int desiredState(boolean enabled, boolean interactive) {
+            if (!enabled) {
+                sessionState = -1;
+                return -1;
+            }
+            if (!interactive) return -1;
+            // Pin the primary for this opt-in session. Switching 4 <-> 5 during
+            // a fold blanks both panels on Samsung, defeating prelighting.
+            if (sessionState == -1) sessionState = angle == 0 ? 5 : 4;
+            return sessionState;
         }
     }
 
     private final Object manager;
-    private final Object request;
+    private Object request;
+    private final Class<?> requestClass;
     private final Method submit;
     private final Method cancel;
-    private boolean held;
+    private final Object callback;
+    private int heldState = -1;
+    private long retryAfter;
+    private final Handler handler = new Handler(Looper.getMainLooper());
 
     private FoldDisplayBridge() throws Exception {
         Class<?> global = Class.forName("android.hardware.devicestate.DeviceStateManagerGlobal");
         manager = global.getMethod("getInstance").invoke(null);
-        Class<?> requestClass = Class.forName("android.hardware.devicestate.DeviceStateRequest");
-        Object builder = requestClass.getMethod("newBuilder", int.class).invoke(null, 4);
-        request = builder.getClass().getMethod("build").invoke(builder);
-        submit = global.getMethod("requestState", requestClass, java.util.concurrent.Executor.class,
-                Class.forName("android.hardware.devicestate.DeviceStateRequest$Callback"));
+        requestClass = Class.forName("android.hardware.devicestate.DeviceStateRequest");
+        Class<?> callbackClass = Class.forName("android.hardware.devicestate.DeviceStateRequest$Callback");
+        submit = global.getMethod("requestState", requestClass, java.util.concurrent.Executor.class, callbackClass);
         cancel = global.getMethod("cancelStateRequest");
+        callback = Proxy.newProxyInstance(callbackClass.getClassLoader(), new Class<?>[]{callbackClass},
+                (proxy, method, arguments) -> {
+                    if (method.getDeclaringClass() == Object.class) {
+                        if (method.getName().equals("hashCode")) return System.identityHashCode(proxy);
+                        if (method.getName().equals("equals")) return proxy == arguments[0];
+                        return "FoldDisplayBridge.Callback";
+                    }
+                    if (method.getName().equals("onRequestCanceled") && arguments[0] == request) {
+                        heldState = -1;
+                        retryAfter = SystemClock.elapsedRealtime() + 250;
+                    }
+                    System.out.println(SystemClock.elapsedRealtime() + " " + method.getName());
+                    return null;
+                });
     }
 
-    private synchronized void setConcurrent(boolean enabled) {
-        if (enabled == held) return;
+    private synchronized void setState(int state) {
+        if (state == heldState || (state != -1 && SystemClock.elapsedRealtime() < retryAfter)) return;
         try {
-            if (enabled) submit.invoke(manager, request, null, null);
-            else cancel.invoke(manager);
-            held = enabled;
-            System.out.println(enabled ? "concurrent requested" : "physical state restored");
+            if (state != -1) {
+                Object builder = requestClass.getMethod("newBuilder", int.class).invoke(null, state);
+                request = builder.getClass().getMethod("build").invoke(builder);
+                submit.invoke(manager, request, (java.util.concurrent.Executor) handler::post, callback);
+            } else {
+                request = null;
+                cancel.invoke(manager);
+            }
+            heldState = state;
+            System.out.println(SystemClock.elapsedRealtime() + " requested=" + state);
         } catch (Exception e) {
-            // Exit on any IPC failure; binder death releases any surviving request.
+            // Binder death releases any surviving request.
             e.printStackTrace();
             System.exit(1);
         }
@@ -85,11 +104,11 @@ public final class FoldDisplayBridge {
         Object thread = activityThread.getMethod("systemMain").invoke(null);
         Context context = (Context) activityThread.getMethod("getSystemContext").invoke(thread);
         FoldDisplayBridge bridge = new FoldDisplayBridge();
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> bridge.setConcurrent(false)));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> bridge.setState(-1)));
         if (args.length == 1 && args[0].equals("--probe")) {
-            bridge.setConcurrent(true);
+            bridge.setState(4);
             Thread.sleep(1500);
-            bridge.setConcurrent(false);
+            bridge.setState(-1);
             System.out.println("probe passed");
             System.exit(0);
         }
@@ -105,15 +124,15 @@ public final class FoldDisplayBridge {
         new Thread(() -> {
             while (true) {
                 try {
-                    Process query = new ProcessBuilder("settings", "--user", "current", "get",
-                            "secure", "enabled_accessibility_services").redirectErrorStream(true).start();
+                    Process query = new ProcessBuilder("content", "query", "--user",
+                            String.valueOf(Class.forName("android.app.ActivityManager").getMethod("getCurrentUser").invoke(null)), "--uri",
+                            "content://com.duoopen.fold7.displaybridge/status").redirectErrorStream(true).start();
                     boolean found = false;
                     if (query.waitFor(2, TimeUnit.SECONDS) && query.exitValue() == 0) {
                         try (BufferedReader reader = new BufferedReader(new InputStreamReader(query.getInputStream()))) {
-                            String services = reader.readLine();
-                            if (services != null) for (String component : services.split(":")) {
-                                if (component.equals("com.duoopen.fold7/com.duoopen.overlay.FoldOverlayService"))
-                                    found = true;
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                if (line.matches("Row: [0-9]+ enabled=1")) found = true;
                             }
                         }
                     } else query.destroyForcibly();
@@ -121,7 +140,7 @@ public final class FoldDisplayBridge {
                     Thread.sleep(1000);
                 } catch (Exception e) {
                     enabled.set(false);
-                    System.err.println("Cannot read accessibility gate; exiting");
+                    System.err.println("Cannot read display test gate; exiting");
                     System.exit(1);
                     return;
                 }
@@ -131,9 +150,8 @@ public final class FoldDisplayBridge {
             public void onSensorChanged(SensorEvent event) {
                 long now = SystemClock.elapsedRealtime();
                 policy.sample(event.values[0], now);
-                boolean allowed = enabled.get() && power.isInteractive();
-                if (!allowed) policy.lastMotion = -1;
-                bridge.setConcurrent(policy.wantsConcurrent(now, allowed));
+                System.out.println(now + " angle=" + policy.angle + " gate=" + enabled.get() + " interactive=" + power.isInteractive());
+                bridge.setState(policy.desiredState(enabled.get(), power.isInteractive()));
             }
             public void onAccuracyChanged(Sensor sensor, int accuracy) {}
         };
@@ -141,39 +159,36 @@ public final class FoldDisplayBridge {
             throw new IllegalStateException("Cannot subscribe to hinge sensor");
         handler.post(new Runnable() {
             public void run() {
-                boolean allowed = enabled.get() && power.isInteractive();
-                if (!allowed) policy.lastMotion = -1;
-                bridge.setConcurrent(policy.wantsConcurrent(SystemClock.elapsedRealtime(), allowed));
+                bridge.setState(policy.desiredState(enabled.get(), power.isInteractive()));
                 handler.postDelayed(this, 100);
             }
         });
         System.out.println("ready: " + hinge.getName());
         Looper.loop();
         sensors.unregisterListener(listener);
-        bridge.setConcurrent(false);
+        bridge.setState(-1);
         lock.release();
         lockFile.close();
     }
 
     static void selfTest() {
         Policy p = new Policy();
-        check(!p.wantsConcurrent(0, true), "unknown angle");
-        p.sample(90, 0);
-        check(!p.wantsConcurrent(0, true), "no motion on startup");
-        p.sample(91, 10);
-        check(p.wantsConcurrent(10, true), "motion activates");
-        check(!p.wantsConcurrent(10, false), "screen off");
-        check(p.wantsConcurrent(1509, true), "before timeout");
-        check(!p.wantsConcurrent(1510, true), "stall timeout");
-        p.sample(3, 1600);
-        check(!p.wantsConcurrent(1600, true), "closed endpoint");
-        p.sample(177, 1700);
-        check(!p.wantsConcurrent(1700, true), "flat endpoint");
-        p.sample(176, 1800);
-        check(p.wantsConcurrent(1800, true), "fold from flat");
-        p.sample(Float.NaN, 1900);
-        check(!p.wantsConcurrent(1900, true), "invalid sensor");
-        System.out.println("9 policy checks passed");
+        check(p.desiredState(false, true) == -1, "disabled releases");
+        p.sample(180, 0);
+        check(p.desiredState(true, true) == 4, "open session prelights cover");
+        p.sample(90, 1);
+        check(p.desiredState(true, true) == 4, "partial keeps same mode");
+        p.sample(0, 2);
+        check(p.desiredState(true, true) == 4, "closed cannot blank panels through a mode swap");
+        check(p.desiredState(true, false) == -1, "sleep releases");
+        check(p.desiredState(true, true) == 4, "wake preserves session primary");
+        check(p.desiredState(false, true) == -1, "opt-out releases and resets session");
+        check(p.desiredState(true, true) == 5, "new closed session prelights inner");
+        p.sample(180, 3);
+        check(p.desiredState(true, true) == 5, "opening preserves cover-primary session");
+        p.sample(Float.NaN, 4);
+        check(p.desiredState(true, true) == 5, "invalid sample cannot change mode");
+        System.out.println("10 policy checks passed");
     }
     static void check(boolean condition, String name) {
         if (!condition) throw new AssertionError(name);

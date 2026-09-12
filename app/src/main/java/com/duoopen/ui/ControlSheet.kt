@@ -88,6 +88,23 @@ fun ControlSheet(
 
             HorizontalDivider(Modifier.padding(vertical = 12.dp))
 
+            if (android.os.Build.MODEL.startsWith("SM-F966")) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Keep both displays awake · test", Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleSmall)
+                    Switch(
+                        checked = config.keepBothDisplaysAwake,
+                        onCheckedChange = { value -> DuoSettings.update { it.copy(keepBothDisplaysAwake = value) } },
+                    )
+                }
+                Text("Prelights both screens while the phone is awake. Uses more battery. " +
+                    "The main screen stays fixed until you turn this off. Requires the display helper, " +
+                    "restarted through ADB after reboot.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                HorizontalDivider(Modifier.padding(vertical = 12.dp))
+            }
+
             Text("Unfold effect", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
             Text(

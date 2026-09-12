@@ -11,7 +11,9 @@ Changes:
 - Shader bindings and stable uniforms are reused. Cancelled frame callbacks cannot restart old animations.
 - Capture generations reject old callbacks; fading overlays and pending demo callbacks are removed on panel changes.
 
-The optional [device-local display bridge](tools/fold-bridge.md) enables Samsung concurrent mode while folding. It requires an ADB-started shell process; the APK cannot obtain the privileged display permission itself. It releases the override at rest, on inactivity/screen-off, when the service is disabled, and on process death. Restart the bridge after a phone reboot. The app works with the normal panel handoff when the bridge is absent.
+The optional [device-local display bridge](tools/fold-bridge.md) is controlled by **Tune → Keep both displays awake · test**, off by default. When enabled, both panels are requested while the phone is awake, including at rest, so the second panel need not wait for a hinge event. This uses more battery and keeps the primary interactive screen fixed until the toggle is turned off. The helper releases its override when the test toggle or accessibility service is disabled, when the phone sleeps, and on process death. It requires an ADB-started shell process, restarted after reboot; the APK cannot obtain the privileged display permission itself.
+
+On this Fold7 firmware the standard hinge sensor reports only 0°, 90°, and 180°; Samsung's finer folding sensor rejected the shell subscription. The test mode removes the wait for that coarse signal to request both screens, but cannot make the animation track an unavailable continuous angle. Concurrent secondary snapshots now settle into focus and remain visible until their panel switches off; removing them after 700 ms previously exposed a black panel.
 
 Build with JDK 21 (bytecode targets Java 17) and Android SDK 35:
 
@@ -21,7 +23,7 @@ python3 tools/tests/run_tilt_follower_test.py
 ANDROID_HOME=/path/to/android-sdk bash tools/build-fold-bridge.sh
 ```
 
-Device verification on SM-F966U1 / Android 16, 2026-09-12: both physical displays ON, overlays attached to display IDs 0 and 1 in a simultaneous demo, both overlays removed after completion, state restored to physical OPENED. Shared demo capture: inner 13 ms, cover 23 ms total; measured updated cold launch 455 ms. These are individual observations, not a before/after benchmark. Physical fold feel still needs operator validation.
+Device verification on SM-F966U1 / Android 16, 2026-09-12: both physical displays ON, overlays attached to display IDs 0 and 1 in a simultaneous demo, both overlays removed after completion, state restored to physical OPENED. Shared demo capture: inner 13 ms, cover 23 ms total; measured updated cold launch 455 ms. These are individual observations, not a before/after benchmark. Physical testing subsequently found firmware-driven flashes even with a fixed concurrent request; the dual-display toggle remains experimental.
 
 Original upstream documentation follows.
 
