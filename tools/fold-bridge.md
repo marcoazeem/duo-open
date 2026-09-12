@@ -1,5 +1,7 @@
 # Fold7 concurrent-display bridge
 
+Experimental diagnostic helper: leave stopped for normal phone use. Physical Fold7 testing showed delayed panel handoffs and flashing. The always-awake test was reverted after a frozen inner screen; this restored motion-only helper does not establish seamless folding. The APK works with Samsung’s normal display control without it.
+
 This optional shell-privileged helper temporarily requests Samsung's state 4
 (`CONCURRENT_INNER_DEFAULT`) while the hinge moves between 3 and 177 degrees.
 It releases at either endpoint, after 1.5 seconds without meaningful motion,

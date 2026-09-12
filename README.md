@@ -11,7 +11,7 @@ Changes:
 - Shader bindings and stable uniforms are reused. Cancelled frame callbacks cannot restart old animations.
 - Capture generations reject old callbacks; fading overlays and pending demo callbacks are removed on panel changes.
 
-The optional [device-local display bridge](tools/fold-bridge.md) enables Samsung concurrent mode while folding. It requires an ADB-started shell process; the APK cannot obtain the privileged display permission itself. It releases the override at rest, on inactivity/screen-off, when the service is disabled, and on process death. Restart the bridge after a phone reboot. The app works with the normal panel handoff when the bridge is absent.
+The experimental [device-local display bridge](tools/fold-bridge.md) requests Samsung concurrent mode while folding. Leave it stopped for normal phone use: physical testing showed delayed panel handoffs and flashing. It requires an ADB-started shell process; the APK cannot obtain the privileged display permission itself. It releases the override at rest, on inactivity/screen-off, when the service is disabled, and on process death. Restart the bridge after a phone reboot. The app works with the normal panel handoff when the bridge is absent.
 
 Build with JDK 21 (bytecode targets Java 17) and Android SDK 35:
 
@@ -21,7 +21,7 @@ python3 tools/tests/run_tilt_follower_test.py
 ANDROID_HOME=/path/to/android-sdk bash tools/build-fold-bridge.sh
 ```
 
-Device verification on SM-F966U1 / Android 16, 2026-09-12: both physical displays ON, overlays attached to display IDs 0 and 1 in a simultaneous demo, both overlays removed after completion, state restored to physical OPENED. Shared demo capture: inner 13 ms, cover 23 ms total; measured updated cold launch 455 ms. These are individual observations, not a before/after benchmark. Physical fold feel still needs operator validation.
+Device verification on SM-F966U1 / Android 16, 2026-09-12: both physical displays ON, overlays attached to display IDs 0 and 1 in a simultaneous demo, both overlays removed after completion, state restored to physical OPENED. Shared demo capture: inner 13 ms, cover 23 ms total; measured updated cold launch 455 ms. These are individual observations, not a before/after benchmark. Subsequent physical testing reported delayed handoffs and flashing. The always-awake experiment was reverted after it froze the inner screen. This build restores the pre-experiment app; seamless dual-screen folding is unresolved.
 
 Original upstream documentation follows.
 
