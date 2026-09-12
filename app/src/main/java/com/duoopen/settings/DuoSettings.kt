@@ -34,7 +34,6 @@ data class DuoConfig(
     val movingSide: Int = -1,
     val coverFrostFromRight: Boolean = true,
     val imageVersion: Long = 0L,
-    val keepBothDisplaysAwake: Boolean = false,
 )
 
 object DuoSettings {
@@ -56,7 +55,6 @@ object DuoSettings {
             movingSide = prefs.getInt("movingSide", d.movingSide),
             coverFrostFromRight = prefs.getBoolean("coverFrostFromRight", d.coverFrostFromRight),
             imageVersion = prefs.getLong("imageVersion", d.imageVersion),
-            keepBothDisplaysAwake = prefs.getBoolean("keepBothDisplaysAwake", false),
         )
     }
 
@@ -73,7 +71,6 @@ object DuoSettings {
             putInt("movingSide", next.movingSide)
             putBoolean("coverFrostFromRight", next.coverFrostFromRight)
             putLong("imageVersion", next.imageVersion)
-            putBoolean("keepBothDisplaysAwake", next.keepBothDisplaysAwake)
         }
     }
 
@@ -84,7 +81,6 @@ object DuoSettings {
             movingSide = it.movingSide,
             coverFrostFromRight = it.coverFrostFromRight,
             imageVersion = it.imageVersion,
-            keepBothDisplaysAwake = it.keepBothDisplaysAwake,
         )
     }
 }
