@@ -20,9 +20,26 @@ it in reverse.
 
 It works over *everything* — your own wallpaper, icons, widgets, the lock
 screen, whatever app is open — because it runs as an accessibility service
-that takes one screenshot per fold phase and draws it through the shader in a
-touch-transparent overlay tracking the hinge. There's also a plain live
-wallpaper mode if you'd rather not enable an accessibility service.
+that draws a touch-transparent overlay above every window, tracking the
+hinge. There's also a plain live wallpaper mode if you'd rather not enable an
+accessibility service.
+
+Two ways to draw the whole-screen fold (**Tune → How it's drawn**):
+
+- **Snapshot** (default): one screenshot per fold phase, bent through the
+  shader. Smooth frost gradient, darkening and the perspective bend at the far
+  edge — but the picture is frozen while it plays, and a panel that has just
+  switched on can't be captured for ~0.4 s (see the next section).
+- **Live blur**: no screenshot at all. The system's own window blur
+  (SurfaceFlinger cross-window blur, the thing behind the notification shade)
+  is applied to the live screen through a handful of strip windows, each
+  blurred by the radius the shader would use at that distance from the
+  crease, with the darkening painted on top. Starts the instant a phase
+  begins, content keeps moving underneath, no capture rate limit. The frost
+  is stepped rather than smooth and there's no perspective bend. Needs window
+  blur enabled on the device (`WindowManager.isCrossWindowBlurEnabled`); the
+  chip is greyed out otherwise, and battery saver can switch blur off
+  system-wide.
 
 ## One screen at a time vs. both screens on
 
@@ -51,9 +68,16 @@ built-in display, so if your phone leaves the cover screen on while the
 inner screen is active, the cover and inner effects run side by side and the
 handover has no gap: the cover frosts in from closed, the inner screen lights
 up and clears, and a cover that stays lit clears again on its own as you
-reach flat (it peaks mid-fold, since there is no swap to hand over to). This
-path is written to the Android display APIs but **untested** — I don't own
-such a device. If yours keeps both screens on, please open an issue with
+reach flat (it peaks mid-fold, since there is no swap to hand over to).
+
+I don't own such a device, so this path is verified only on an emulator with
+a simulated second display (Android's *Developer options → Simulate
+secondary displays*, plus `adb shell settings put global duoopen_test_displays 1`
+so the service accepts it): both panels get an engine and play together.
+Two things to know on real hardware: Android's screenshot rate limit is
+global, so in **Snapshot** mode the second panel's capture lands ~0.35 s after
+the first — **Live blur** has no such limit and is the better choice there;
+and I'd like to hear how it behaves — please open an issue with
 `adb logcat -s DuoOverlay` from one open/close; the log shows which displays
 got an engine and when each captured.
 
@@ -149,6 +173,7 @@ fold/Panels.kt                            inner vs cover panel from the display 
 overlay/OverlayFeature.kt                 per-flavor facade (full: the service; lite: stubs)
 src/full/…/overlay/FoldOverlayService.kt  accessibility service: one engine per lit display
 src/full/…/overlay/PanelEngine.kt         per-display fold: screenshot + overlay + hinge tracking
+src/full/…/overlay/FoldSurface.kt         snapshot surface, or live-blur strip windows
 src/full/…/overlay/FoldOverlayView.kt     draws the snapshot through the shader (half-res layer)
 wallpaper/DuoWallpaperService.kt          live wallpaper engine
 wallpaper/WallpaperImage.kt               picked image / generated default

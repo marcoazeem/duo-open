@@ -2,14 +2,11 @@ package com.duoopen.overlay
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Bitmap
-import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.SystemClock
 import android.util.Log
 import android.view.Display
-import android.view.Gravity
 import android.view.WindowManager
-import android.view.animation.DecelerateInterpolator
 import com.duoopen.fold.DuoShader
 import com.duoopen.fold.HingeAngleSource
 import com.duoopen.fold.TiltFollower
@@ -39,6 +36,11 @@ import kotlinx.coroutines.withContext
  * On a stops-only hinge sensor (Galaxy Z Fold 7 and earlier: 0/90/180) the
  * overlay can't follow the hinge, so each stop change plays a timed ease
  * instead — the same path the close-onto-cover already uses.
+ *
+ * Two ways to draw ([FoldSurface]): a warped screenshot (default), or — when
+ * [com.duoopen.settings.DuoConfig.liveBlur] is on and the system allows
+ * cross-window blur — the system blur over the live screen, which needs no
+ * capture at all and so starts the instant a phase begins.
  */
 class PanelEngine(
     private val service: AccessibilityService,
@@ -60,7 +62,7 @@ class PanelEngine(
     }
 
     private var phase = Phase.IDLE
-    private var overlay: FoldOverlayView? = null
+    private var surface: FoldSurface? = null
     private var follower: TiltFollower? = null
 
     /** Which panel this display is driving; the effect restarts whenever it flips mid-fold. */
@@ -82,7 +84,7 @@ class PanelEngine(
 
     private val settleCheck = object : Runnable {
         override fun run() {
-            val o = overlay ?: return
+            val o = surface ?: return
             if (o.tilt < DuoShader.FLAT_EPSILON) return
             if (!demoRunning && SystemClock.uptimeMillis() - lastHingeMoveMs >= SETTLE_TIMEOUT_MS) {
                 dismiss(fadeMs = FADE_OUT_STALLED_MS)
@@ -164,13 +166,27 @@ class PanelEngine(
                 restArmed = false
                 Log.i(TAG, "display $displayId: panel swapped (inner=$inner) at hinge=$angle")
                 // The fresh panel may still be lighting up: retry if black.
-                startCapture(afterSwap = true)
+                startEffect(afterSwap = true)
             }
             restArmed && tilt >= REST_LEAVE_TILT -> {
                 restArmed = false
                 Log.i(TAG, "display $displayId: leaving rest (inner=$inner) at hinge=$angle")
-                startCapture(afterSwap = false)
+                startEffect(afterSwap = false)
             }
+        }
+    }
+
+    /** Live blur needs no capture: the system blurs whatever is on screen. */
+    private fun liveMode(): Boolean =
+        DuoSettings.config.value.liveBlur &&
+            runCatching { windowManager.isCrossWindowBlurEnabled }.getOrDefault(false)
+
+    private fun startEffect(afterSwap: Boolean, startTilt: Float? = null) {
+        if (liveMode()) {
+            phase = Phase.CAPTURING // same gate as a capture in flight, resolved synchronously
+            present(bitmap = null, afterSwap = afterSwap, startTilt = startTilt, t0 = SystemClock.uptimeMillis())
+        } else {
+            startCapture(afterSwap, startTilt)
         }
     }
 
@@ -250,9 +266,16 @@ class PanelEngine(
         })
     }
 
-    private fun onCaptured(bitmap: Bitmap, afterSwap: Boolean, startTilt: Float?, t0: Long) {
+    private fun onCaptured(bitmap: Bitmap, afterSwap: Boolean, startTilt: Float?, t0: Long) =
+        present(bitmap, afterSwap, startTilt, t0)
+
+    /**
+     * Puts the effect on screen: [bitmap] through the shader, or with no
+     * bitmap the live blur over whatever is there.
+     */
+    private fun present(bitmap: Bitmap?, afterSwap: Boolean, startTilt: Float?, t0: Long) {
         if (phase != Phase.CAPTURING) {
-            bitmap.recycle()
+            bitmap?.recycle()
             return
         }
         val angle = hinge.lastAngle
@@ -262,12 +285,13 @@ class PanelEngine(
         // A stops-only sensor can't be followed, so each stop change plays a
         // fixed ease: frost in on leaving rest, frost out on the fresh panel.
         val tilt = startTilt ?: if (coarse) (if (afterSwap) peak else DuoShader.FLAT_EPSILON * 1.2f) else currentTilt()
-        val nearlyDone = afterSwap && live &&
+        // A capture lands late; the live blur is instant, so it's never "too late".
+        val nearlyDone = bitmap != null && afterSwap && live &&
             if (innerPanel) angle > SKIP_INNER_ABOVE_HINGE else angle < SKIP_COVER_BELOW_HINGE
         if (tilt < DuoShader.FLAT_EPSILON || nearlyDone) {
             // Too late to be worth a pop-in: the fold is (almost) over.
             Log.i(TAG, "display $displayId: hinge=$angle by capture time (${SystemClock.uptimeMillis() - t0}ms); skipping")
-            bitmap.recycle()
+            bitmap?.recycle()
             phase = Phase.IDLE
             return
         }
@@ -281,7 +305,8 @@ class PanelEngine(
             coarse -> if (afterSwap) 0f else peak
             else -> null
         }
-        Log.i(TAG, "display $displayId: showing ${bitmap.width}x${bitmap.height} at tilt=$tilt (capture ${SystemClock.uptimeMillis() - t0}ms)${easeTo?.let { " easing to $it" } ?: ""}")
+        val how = if (bitmap != null) "${bitmap.width}x${bitmap.height} snapshot (capture ${SystemClock.uptimeMillis() - t0}ms)" else "live blur"
+        Log.i(TAG, "display $displayId: showing $how at tilt=$tilt${easeTo?.let { " easing to $it" } ?: ""}")
         show(bitmap, tilt, fadeIn = afterSwap, easeTo = easeTo)
     }
 
@@ -311,46 +336,32 @@ class PanelEngine(
      * until it's back at rest; easing up to a frosted peak holds there
      * briefly, then fades unless a panel swap has replaced it.
      */
-    private fun show(bitmap: Bitmap, startTilt: Float, fadeIn: Boolean = false, easeTo: Float? = null) {
+    private fun show(bitmap: Bitmap?, startTilt: Float, fadeIn: Boolean = false, easeTo: Float? = null) {
         val inner = innerPanel
-        val view = FoldOverlayView(service, bitmap, { w, h, c -> DuoShader.foldFor(inner, w, h, c) }).apply {
-            config = DuoSettings.config.value
-            tilt = startTilt
+        val config = DuoSettings.config.value
+        val foldLine = { w: Float, h: Float, c: com.duoopen.settings.DuoConfig -> DuoShader.foldFor(inner, w, h, c) }
+        val created: FoldSurface? = if (bitmap != null) {
+            SnapshotSurface(service, windowManager, bitmap, config, foldLine).takeIf { it.attached }
+        } else {
+            LiveBlurSurface(service, windowManager, config, DuoShader.pxPerMm(service.createDisplayContext(display)), foldLine)
+                .takeIf { it.attached }
         }
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            PixelFormat.OPAQUE,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-            fitInsetsTypes = 0
-            title = "DuoOpenFold"
-        }
-        try {
-            windowManager.addView(view, params)
-        } catch (e: Exception) {
-            Log.e(TAG, "display $displayId: addView failed", e)
-            bitmap.recycle()
+        if (created == null) {
+            Log.e(TAG, "display $displayId: could not attach overlay")
+            bitmap?.recycle()
             phase = Phase.IDLE
             return
         }
-        overlay = view
+        created.tilt = startTilt
+        surface = created
         phase = Phase.SHOWING
         onShowingChanged()
         if (fadeIn) {
             // Content was already live on this panel; ease the frost in.
-            view.alpha = 0f
-            view.animate().alpha(1f).setDuration(FADE_IN_MS).start()
+            created.fadeIn(FADE_IN_MS)
         }
         follower = TiltFollower { t ->
-            view.tilt = t
+            created.tilt = t
             if (t < DuoShader.FLAT_EPSILON && !demoRunning) dismiss(fadeMs = FADE_OUT_FLAT_MS)
         }.also { it.snap(startTilt) }
         lastHingeMoveMs = SystemClock.uptimeMillis()
@@ -365,23 +376,18 @@ class PanelEngine(
     }
 
     private fun dismiss(fadeMs: Long) {
-        val view = overlay ?: return
-        Log.i(TAG, "display $displayId: dismiss (fade ${fadeMs}ms) at tilt=${view.tilt}")
+        val s = surface ?: return
+        Log.i(TAG, "display $displayId: dismiss (fade ${fadeMs}ms) at tilt=${s.tilt}")
         clearOverlayState()
-        view.animate()
-            .alpha(0f)
-            .setDuration(fadeMs)
-            .setInterpolator(DecelerateInterpolator())
-            .withEndAction { detach(view) }
-            .start()
+        s.fadeOut(fadeMs) { s.detach() }
     }
 
     private fun removeOverlay() {
         phase = Phase.IDLE
         timedResolve = false
-        val view = overlay ?: return
+        val s = surface ?: return
         clearOverlayState()
-        detach(view)
+        s.detach()
     }
 
     private fun clearOverlayState() {
@@ -389,14 +395,10 @@ class PanelEngine(
         handler.removeCallbacks(peakHold)
         follower?.cancel()
         follower = null
-        overlay = null
+        surface = null
         timedResolve = false
         phase = Phase.IDLE
         onShowingChanged()
-    }
-
-    private fun detach(view: FoldOverlayView) {
-        runCatching { windowManager.removeViewImmediate(view) }
     }
 
     /** The display went away or the service is stopping. */
@@ -418,7 +420,7 @@ class PanelEngine(
         val peak = DuoShader.MAX_TILT * DuoSettings.config.value.intensity.coerceAtMost(1f)
         // Frost at the very start so the overlay is visibly there; on the
         // cover it starts flat and sweeps in first.
-        startCapture(afterSwap = false, startTilt = if (inner) peak else 0.06f)
+        startEffect(afterSwap = false, startTilt = if (inner) peak else 0.06f)
         handler.postDelayed({
             val f = follower
             if (f == null) {

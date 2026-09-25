@@ -40,8 +40,10 @@ import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /**
- * Tuning controls. A modal sheet is its own window, so it stays crisp while
- * the screen behind it folds.
+ * Settings, top to bottom in the order a new user needs them: where the
+ * effect plays → how it's drawn → what it looks like → which parts move →
+ * the wallpaper image → the hinge sensor (diagnostics). A modal sheet is its
+ * own window, so it stays crisp while the screen behind it folds.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,8 +59,10 @@ fun ControlSheet(
     onPickImage: () -> Unit,
     onDefaultImage: () -> Unit,
     onSetWallpaper: () -> Unit,
+    wallpaperActive: Boolean,
     overlayAvailable: Boolean,
     overlayEnabled: Boolean,
+    liveBlurSupported: Boolean,
     onEnableOverlay: () -> Unit,
     onTestOverlay: () -> Unit,
     onDismiss: () -> Unit,
@@ -92,114 +96,74 @@ fun ControlSheet(
                 .navigationBarsPadding()
                 .padding(bottom = 16.dp),
         ) {
+            // 1. Where it plays -------------------------------------------------
+            Section("Where it plays")
             if (overlayAvailable) {
-                Text("Full-screen fold", style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(4.dp))
-                Text(
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Whole screen", style = MaterialTheme.typography.titleSmall)
+                        Hint(
+                            if (overlayEnabled) "On. Folds everything — your wallpaper, icons, lock screen, open apps."
+                            else "Off. Needs the accessibility service “Duo Open full-screen fold”.",
+                        )
+                    }
                     if (overlayEnabled) {
-                        "On — folds the whole screen (any wallpaper, icons, apps) as you open the phone."
+                        Button(onClick = onTestOverlay) { Text("Test") }
                     } else {
-                        "Off — only the live wallpaper folds. Turn on “Duo Open full-screen fold” under Accessibility to fold everything."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (overlayEnabled) {
-                        Button(onClick = onTestOverlay, modifier = Modifier.weight(1f)) { Text("Test it now") }
-                        OutlinedButton(onClick = onEnableOverlay, modifier = Modifier.weight(1f)) { Text("Accessibility") }
-                    } else {
-                        Button(onClick = onEnableOverlay, modifier = Modifier.weight(1f)) { Text("Turn on in Accessibility") }
+                        Button(onClick = onEnableOverlay) { Text("Turn on") }
                     }
                 }
-                if (!overlayEnabled) {
-                    TextButton(onClick = { showGuide = true }) { Text("Toggle greyed out?") }
+                if (overlayEnabled) {
+                    TextButton(onClick = onEnableOverlay) { Text("Accessibility settings") }
+                } else {
+                    TextButton(onClick = { showGuide = true }) { Text("Toggle greyed out? Read this") }
                 }
-            } else {
-                Text("Lite edition", style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Wallpaper only: the fold plays on the home and lock screen wallpaper, never over apps. " +
-                        "No accessibility service, so nothing for Play Protect to flag. The full edition adds the system-wide fold.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Spacer(Modifier.height(8.dp))
             }
-
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
-
-            Text("Unfold effect", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                sensorStatus,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (hasSensor && hinge.isCoarse) {
-                Text(
-                    "This hinge sensor only reports 0°, 90° and 180° (the continuous one is locked to system apps on " +
-                        "Galaxy Z Fold 7 and earlier), so the fold plays as a short animation at each stop instead of " +
-                        "tracking your hand.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.tertiary,
-                )
-            }
-            Text(
-                "Hinge ${if (hingeAngle.isNaN()) "—" else "${hingeAngle.roundToInt()}°"}  ·  pane tilt %.1f°".format(paneTilt),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            TextButton(onClick = { clipboard.setText(AnnotatedString(hinge.report())) }) {
-                Text("Copy sensor report")
-            }
-
-            Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Simulate hinge", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                Switch(
-                    checked = simulate,
-                    onCheckedChange = onSimulateChange,
-                    enabled = hasSensor,
-                )
-            }
-            if (simulate) {
-                LabeledSlider(
-                    label = "Hinge angle",
-                    valueText = "${simulatedAngle.roundToInt()}°",
-                    value = simulatedAngle,
-                    onValueChange = onSimulatedAngleChange,
-                    range = 60f..180f,
-                )
-            }
-
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
-
-            Text("Moving half", style = MaterialTheme.typography.titleSmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(-1 to "Left", 1 to "Right", 0 to "Both").forEach { (side, label) ->
-                    FilterChip(
-                        selected = config.movingSide == side,
-                        onClick = { DuoSettings.update { it.copy(movingSide = side) } },
-                        label = { Text(label) },
+                Column(Modifier.weight(1f)) {
+                    Text("Wallpaper only", style = MaterialTheme.typography.titleSmall)
+                    Hint(
+                        when {
+                            wallpaperActive -> "Active. The home and lock screen wallpaper folds; icons stay sharp."
+                            overlayAvailable -> "Alternative that needs no accessibility service. Only the wallpaper folds."
+                            else -> "This edition folds the home and lock screen wallpaper; icons and apps stay sharp."
+                        },
                     )
                 }
+                OutlinedButton(onClick = onSetWallpaper) { Text(if (wallpaperActive) "Change" else "Set") }
             }
-            Spacer(Modifier.height(8.dp))
-            Text("Cover screen frost from", style = MaterialTheme.typography.titleSmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(true to "Right", false to "Left").forEach { (fromRight, label) ->
-                    FilterChip(
-                        selected = config.coverFrostFromRight == fromRight,
-                        onClick = { DuoSettings.update { it.copy(coverFrostFromRight = fromRight) } },
-                        label = { Text(label) },
-                    )
+
+            // 2. How it's drawn -------------------------------------------------
+            if (overlayAvailable) {
+                Divider()
+                Section("How it's drawn", "Applies to the whole-screen fold.")
+                Choice(
+                    options = listOf(false to "Snapshot", true to "Live blur"),
+                    selected = config.liveBlur,
+                    enabled = { !it || liveBlurSupported },
+                    onSelect = { v -> DuoSettings.update { it.copy(liveBlur = v) } },
+                )
+                Hint(
+                    if (config.liveBlur && liveBlurSupported) {
+                        "Blurs the real screen with the system blur, live. No screenshot, no delay after the panel switches, " +
+                            "and content keeps moving. The frost is stepped and there is no perspective bend."
+                    } else {
+                        "Takes one screenshot per fold and bends it like glass. Smooth frost and perspective, " +
+                            "but the picture is frozen while it plays and there is a short delay after a panel switches on."
+                    },
+                )
+                if (!liveBlurSupported) {
+                    Hint("Live blur isn't available: this device has window blur turned off.", warn = true)
                 }
             }
-            Spacer(Modifier.height(8.dp))
 
+            // 3. Look ---------------------------------------------------------
+            Divider()
+            Section("Look")
             LabeledSlider(
                 label = "Strength",
+                hint = "How heavy the frost gets. 1× follows the real hinge angle.",
                 valueText = "%.2f×".format(config.intensity),
                 value = config.intensity,
                 onValueChange = { v -> DuoSettings.update { it.copy(intensity = v) } },
@@ -207,6 +171,7 @@ fun ControlSheet(
             )
             LabeledSlider(
                 label = "Frost",
+                hint = "How quickly the blur grows away from the crease.",
                 valueText = "%.2f".format(config.blurSpread),
                 value = config.blurSpread,
                 onValueChange = { v -> DuoSettings.update { it.copy(blurSpread = v) } },
@@ -214,6 +179,7 @@ fun ControlSheet(
             )
             LabeledSlider(
                 label = "Darkening",
+                hint = "How much the frosted glass dims what's behind it.",
                 valueText = "%.3f".format(config.darkening),
                 value = config.darkening,
                 onValueChange = { v -> DuoSettings.update { it.copy(darkening = v) } },
@@ -221,40 +187,121 @@ fun ControlSheet(
             )
             LabeledSlider(
                 label = "Eye distance",
+                hint = "Perspective. Closer = more bend at the far edge. Snapshot mode only.",
                 valueText = "${config.eyeDistanceMm.roundToInt()} mm",
                 value = config.eyeDistanceMm,
                 onValueChange = { v -> DuoSettings.update { it.copy(eyeDistanceMm = v) } },
                 range = 200f..800f,
+                enabled = !(config.liveBlur && liveBlurSupported),
             )
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "Fold splits the ${if (config.foldSplitsLong) "long" else "short"} side",
-                    Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                TextButton(onClick = { DuoSettings.update { it.copy(foldSplitsLong = !it.foldSplitsLong) } }) {
-                    Text("Flip")
-                }
-            }
-            TextButton(onClick = DuoSettings::resetTuning) { Text("Reset tuning") }
+            TextButton(onClick = DuoSettings::resetTuning) { Text("Reset look") }
 
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = onPickImage, modifier = Modifier.weight(1f)) {
-                    Text("Choose image")
-                }
-                OutlinedButton(onClick = onDefaultImage, modifier = Modifier.weight(1f)) {
-                    Text("Default image")
-                }
-            }
+            // 4. Which parts move ----------------------------------------------
+            Divider()
+            Section("Which parts move")
+            Text("Inner screen: half that swings", style = MaterialTheme.typography.titleSmall)
+            Hint("Pick the half you don't hold. It frosts; the crease stays sharp.")
+            Choice(
+                options = listOf(-1 to "Left", 1 to "Right", 0 to "Both"),
+                selected = config.movingSide,
+                onSelect = { side -> DuoSettings.update { it.copy(movingSide = side) } },
+            )
             Spacer(Modifier.height(8.dp))
-            Button(onClick = onSetWallpaper, modifier = Modifier.fillMaxWidth()) {
-                Text("Set as live wallpaper")
+            Text("Cover screen: frost comes from", style = MaterialTheme.typography.titleSmall)
+            Hint("Which edge frosts first as you start opening; it clears the same way on closing.")
+            Choice(
+                options = listOf(true to "Right edge", false to "Left edge"),
+                selected = config.coverFrostFromRight,
+                onSelect = { v -> DuoSettings.update { it.copy(coverFrostFromRight = v) } },
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Crease runs across the ${if (config.foldSplitsLong) "long" else "short"} side", style = MaterialTheme.typography.titleSmall)
+                    Hint("Detected automatically. Flip only if the crease appears in the wrong place.")
+                }
+                TextButton(onClick = { DuoSettings.update { it.copy(foldSplitsLong = !it.foldSplitsLong) } }) { Text("Flip") }
             }
+
+            // 5. Wallpaper image ----------------------------------------------
+            Divider()
+            Section("Wallpaper image", "Only used by the wallpaper mode and this preview. The whole-screen fold uses whatever is on screen.")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = onPickImage, modifier = Modifier.weight(1f)) { Text("Choose image") }
+                OutlinedButton(onClick = onDefaultImage, modifier = Modifier.weight(1f)) { Text("Use default") }
+            }
+
+            // 6. Hinge sensor -------------------------------------------------
+            Divider()
+            Section("Hinge sensor", "Diagnostics. Nothing here changes the look.")
+            Hint(sensorStatus)
+            if (hasSensor && hinge.isCoarse) {
+                Hint(
+                    "This sensor only reports 0°, 90° and 180° (the continuous one is locked to system apps on " +
+                        "Galaxy Z Fold 7 and earlier), so the fold plays as a short animation at each stop instead of " +
+                        "tracking your hand.",
+                    warn = true,
+                )
+            }
+            Hint("Hinge ${if (hingeAngle.isNaN()) "—" else "${hingeAngle.roundToInt()}°"}  ·  pane tilt %.1f°".format(paneTilt))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Simulate the hinge", style = MaterialTheme.typography.titleSmall)
+                    Hint("Drive the preview above with a slider instead of the real hinge.")
+                }
+                Switch(checked = simulate, onCheckedChange = onSimulateChange, enabled = hasSensor)
+            }
+            if (simulate) {
+                LabeledSlider(
+                    label = "Hinge angle",
+                    hint = null,
+                    valueText = "${simulatedAngle.roundToInt()}°",
+                    value = simulatedAngle,
+                    onValueChange = onSimulatedAngleChange,
+                    range = 60f..180f,
+                )
+            }
+            TextButton(onClick = { clipboard.setText(AnnotatedString(hinge.report())) }) {
+                Text("Copy sensor report for a bug report")
+            }
+        }
+    }
+}
+
+@Composable
+private fun Section(title: String, hint: String? = null) {
+    Text(title, style = MaterialTheme.typography.titleLarge)
+    if (hint != null) Hint(hint)
+    Spacer(Modifier.height(8.dp))
+}
+
+@Composable
+private fun Divider() = HorizontalDivider(Modifier.padding(vertical = 14.dp))
+
+@Composable
+private fun Hint(text: String, warn: Boolean = false) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (warn) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Composable
+private fun <T> Choice(
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    enabled: (T) -> Boolean = { true },
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((value, label) in options) {
+            FilterChip(
+                selected = selected == value,
+                onClick = { onSelect(value) },
+                label = { Text(label) },
+                enabled = enabled(value),
+            )
         }
     }
 }
@@ -262,10 +309,12 @@ fun ControlSheet(
 @Composable
 private fun LabeledSlider(
     label: String,
+    hint: String?,
     valueText: String,
     value: Float,
     onValueChange: (Float) -> Unit,
     range: ClosedFloatingPointRange<Float>,
+    enabled: Boolean = true,
 ) {
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth()) {
@@ -276,6 +325,7 @@ private fun LabeledSlider(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Slider(value = value, onValueChange = onValueChange, valueRange = range)
+        if (hint != null) Hint(hint)
+        Slider(value = value, onValueChange = onValueChange, valueRange = range, enabled = enabled)
     }
 }

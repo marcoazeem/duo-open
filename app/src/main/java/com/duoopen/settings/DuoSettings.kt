@@ -8,14 +8,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Tuning shared by the in-app preview and the live wallpaper.
+ * Tuning shared by the in-app preview, the live wallpaper and the overlay.
  *
- * @param intensity Multiplier on the physical pane tilt ((180 - hinge) / 2).
- *   1 = physically faithful; higher makes the frost linger further into the open.
+ * @param intensity Multiplier on the pane tilt. 1 = physically faithful;
+ *   higher makes the frost heavier and linger further into the open.
  * @param blurSpread Blur radius gained per px of glass/plane separation.
  * @param darkening Fraction of light lost per px of blur radius, authored at the
  *   original's 6 units/mm reference density (normalized per display at draw time).
- * @param eyeDistanceMm Viewer distance from the flat screen plane.
+ * @param eyeDistanceMm Viewer distance from the flat screen plane (perspective).
  * @param foldSplitsLong Whether the fold line splits the display's longer side.
  *   Learned from Jetpack WindowManager while the app is open, so the wallpaper
  *   (which can't query fold features) puts the hinge in the right place.
@@ -23,6 +23,9 @@ import kotlinx.coroutines.flow.asStateFlow
  *   -1 = left (top when the fold is horizontal), +1 = right (bottom), 0 = both.
  * @param coverFrostFromRight On the cover screen, frost grows from the right
  *   edge (hinge on the left); false mirrors it.
+ * @param liveBlur Full-screen fold draws with the system's window blur on the
+ *   live screen instead of warping a screenshot. No capture, no delay, but a
+ *   stepped frost and no perspective; ignored where cross-window blur is off.
  * @param imageVersion Bumped whenever the wallpaper image changes.
  */
 data class DuoConfig(
@@ -33,6 +36,7 @@ data class DuoConfig(
     val foldSplitsLong: Boolean = false,
     val movingSide: Int = -1,
     val coverFrostFromRight: Boolean = true,
+    val liveBlur: Boolean = false,
     val imageVersion: Long = 0L,
 )
 
@@ -54,6 +58,7 @@ object DuoSettings {
             foldSplitsLong = prefs.getBoolean("foldSplitsLong", d.foldSplitsLong),
             movingSide = prefs.getInt("movingSide", d.movingSide),
             coverFrostFromRight = prefs.getBoolean("coverFrostFromRight", d.coverFrostFromRight),
+            liveBlur = prefs.getBoolean("liveBlur", d.liveBlur),
             imageVersion = prefs.getLong("imageVersion", d.imageVersion),
         )
     }
@@ -70,16 +75,18 @@ object DuoSettings {
             putBoolean("foldSplitsLong", next.foldSplitsLong)
             putInt("movingSide", next.movingSide)
             putBoolean("coverFrostFromRight", next.coverFrostFromRight)
+            putBoolean("liveBlur", next.liveBlur)
             putLong("imageVersion", next.imageVersion)
         }
     }
 
-    /** Restores the look defaults, keeping fold geometry, moving side and the image. */
+    /** Restores the look defaults, keeping fold geometry, engine choice and the image. */
     fun resetTuning() = update {
         DuoConfig(
             foldSplitsLong = it.foldSplitsLong,
             movingSide = it.movingSide,
             coverFrostFromRight = it.coverFrostFromRight,
+            liveBlur = it.liveBlur,
             imageVersion = it.imageVersion,
         )
     }

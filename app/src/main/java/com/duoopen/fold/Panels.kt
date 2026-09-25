@@ -25,10 +25,14 @@ fun Display?.isInnerPanel(): Boolean {
  * or any other display that isn't a presentation/virtual one (cast, DeX,
  * MediaProjection), in any state but off. Doze counts — the cover screen
  * plays the effect from its always-on clock.
+ *
+ * @param includePresentation Also accept presentation-flagged displays. Only
+ *   for testing the two-panels-lit path on an emulator with a developer-option
+ *   "simulated secondary display" (`settings put global overlay_display_devices …`).
  */
-fun Display.isLivePanel(): Boolean {
+fun Display.isLivePanel(includePresentation: Boolean = false): Boolean {
     if (!isValid) return false
-    val builtIn = displayId == Display.DEFAULT_DISPLAY ||
-        (flags and (Display.FLAG_PRESENTATION or Display.FLAG_PRIVATE)) == 0
+    val rejected = if (includePresentation) Display.FLAG_PRIVATE else Display.FLAG_PRESENTATION or Display.FLAG_PRIVATE
+    val builtIn = displayId == Display.DEFAULT_DISPLAY || (flags and rejected) == 0
     return builtIn && state != Display.STATE_OFF && state != Display.STATE_UNKNOWN
 }

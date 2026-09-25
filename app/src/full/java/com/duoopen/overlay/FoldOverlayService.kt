@@ -10,6 +10,7 @@ import android.content.IntentFilter
 import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
@@ -89,7 +90,11 @@ class FoldOverlayService : AccessibilityService() {
 
     /** Starts engines for panels that lit up, stops those that went dark, then lets each re-evaluate. */
     private fun syncDisplays() {
-        val live = displayManager.displays.filter { it.isLivePanel() }.associateBy { it.displayId }
+        // `adb shell settings put global duoopen_test_displays 1` lets a
+        // simulated secondary display stand in for a second panel (see Panels.kt).
+        val testDisplays = Settings.Global.getInt(contentResolver, TEST_DISPLAYS_SETTING, 0) != 0
+        val live = displayManager.displays.filter { it.isLivePanel(includePresentation = testDisplays) }
+            .associateBy { it.displayId }
         val gone = engines.keys.filter { it !in live }
         for (id in gone) {
             engines.remove(id)?.destroy()
@@ -125,6 +130,7 @@ class FoldOverlayService : AccessibilityService() {
     companion object {
         private const val TAG = "DuoOverlay"
         const val ACTION_DEMO = "com.duoopen.DEMO"
+        private const val TEST_DISPLAYS_SETTING = "duoopen_test_displays"
 
         /** The connected service, for in-process control from the app. */
         @Volatile

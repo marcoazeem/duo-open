@@ -91,6 +91,7 @@ fun DuoApp(foldLineFlow: StateFlow<FoldLine?>) {
     }
     val wallpaperActive = remember(resumeTick) { isWallpaperActive(context) }
     val overlayEnabled = remember(resumeTick) { OverlayFeature.isEnabled(context) }
+    val liveBlurSupported = remember(resumeTick) { OverlayFeature.liveBlurSupported(context) }
     val overlayRunning by OverlayState.running.collectAsStateWithLifecycle()
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -138,8 +139,10 @@ fun DuoApp(foldLineFlow: StateFlow<FoldLine?>) {
                 },
                 onDefaultImage = { WallpaperImage.reset(context.applicationContext) },
                 onSetWallpaper = setWallpaper,
+                wallpaperActive = wallpaperActive,
                 overlayAvailable = OverlayFeature.AVAILABLE,
                 overlayEnabled = overlayEnabled,
+                liveBlurSupported = liveBlurSupported,
                 onEnableOverlay = { openAccessibilitySettings(context) },
                 onTestOverlay = {
                     showSheet = false

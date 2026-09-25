@@ -11,5 +11,7 @@ object OverlayFeature {
 
     fun isEnabled(context: Context): Boolean = false
 
+    fun liveBlurSupported(context: Context): Boolean = false
+
     fun playDemo(): Boolean = false
 }
