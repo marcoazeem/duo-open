@@ -79,6 +79,18 @@ object DuoShader {
         return (progress * MAX_TILT * config.intensity).coerceIn(0f, MAX_TILT)
     }
 
+    /**
+     * Tilt on a cover panel that stays lit while the inner panel is also on
+     * (phones that drive both screens at once). There is no swap to hand
+     * over to, so the frost must clear by itself: flat when closed, peaking
+     * mid-fold, flat again when open — a half sine over the hinge range.
+     */
+    fun concurrentCoverTiltForHinge(hingeDegrees: Float, config: DuoConfig): Float {
+        val progress = ((hingeDegrees - CLOSED_HINGE) / (FLAT_HINGE - CLOSED_HINGE)).coerceIn(0f, 1f)
+        val bump = kotlin.math.sin(Math.PI * progress).toFloat()
+        return (bump * MAX_TILT * config.intensity).coerceIn(0f, MAX_TILT)
+    }
+
     fun tiltFor(hingeDegrees: Float, config: DuoConfig, innerPanel: Boolean): Float =
         if (hingeDegrees.isNaN()) 0f
         else if (innerPanel) tiltForHinge(hingeDegrees, config)

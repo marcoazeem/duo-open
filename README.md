@@ -24,6 +24,39 @@ that takes one screenshot per fold phase and draws it through the shader in a
 touch-transparent overlay tracking the hinge. There's also a plain live
 wallpaper mode if you'd rather not enable an accessibility service.
 
+## One screen at a time vs. both screens on
+
+This matters more than anything else for how the effect looks, so it's worth
+understanding before you judge it.
+
+**Phones that only ever light one panel (OnePlus Open, and most book-style
+foldables).** The cover screen switches *off* and the inner screen switches
+*on* at ~10–30° into an unfold — there is never a moment when both are lit,
+and no app can draw on a panel that is off. On top of that the freshly-lit
+panel shows the system's own black-to-reveal for ~0.4 s before there is
+anything to screenshot, and Android allows one screenshot per ~333 ms. So
+the effect is necessarily two phases with a gap at the swap:
+
+1. cover screen frosts in as you start opening → *swap: black, then the
+   system reveal* → 2. inner screen picks up frosted and clears.
+
+On a normal-speed open you see both; on a fast flick the second phase may
+not have time to appear before you're at 180°, and it is skipped rather than
+popping in late. Closing is the same in reverse. This is a platform limit
+(mostly software: the OS turns the other panel off), not something the app
+can work around without root.
+
+**Phones that keep both panels on.** The service runs one engine per lit
+built-in display, so if your phone leaves the cover screen on while the
+inner screen is active, the cover and inner effects run side by side and the
+handover has no gap: the cover frosts in from closed, the inner screen lights
+up and clears, and a cover that stays lit clears again on its own as you
+reach flat (it peaks mid-fold, since there is no swap to hand over to). This
+path is written to the Android display APIs but **untested** — I don't own
+such a device. If yours keeps both screens on, please open an issue with
+`adb logcat -s DuoOverlay` from one open/close; the log shows which displays
+got an engine and when each captured.
+
 ## Install
 
 Two editions on the [Releases](../../releases) page:
@@ -71,10 +104,9 @@ be captured and the effect simply doesn't play there.
 
 ## Known limits
 
-- Android allows one screenshot every ~333 ms, and a freshly-lit panel shows
-  the system's own black-to-reveal for ~0.4 s first. On a fast flick the
-  second phase (inner screen on open) may not have time to appear; you'll get
-  the cover-screen phase only. Normal-speed folds get both.
+- On phones that light one panel at a time there is an unavoidable gap at
+  the panel swap, and on a fast flick the second phase may not appear at all
+  — see *One screen at a time vs. both screens on* above.
 - If you stop partway (tent mode) the overlay fades out after ~0.7 s so the
   live screen isn't hidden.
 - Reinstalling the app turns the accessibility service off again.
@@ -115,7 +147,8 @@ fold/HingeAngleSource.kt                  hinge sensor picker (vendor fallback, 
 fold/TiltFollower.kt                      per-vsync ease that hides the sensor's 1° steps
 fold/Panels.kt                            inner vs cover panel from the display mode
 overlay/OverlayFeature.kt                 per-flavor facade (full: the service; lite: stubs)
-src/full/…/overlay/FoldOverlayService.kt  accessibility service: screenshot + overlay
+src/full/…/overlay/FoldOverlayService.kt  accessibility service: one engine per lit display
+src/full/…/overlay/PanelEngine.kt         per-display fold: screenshot + overlay + hinge tracking
 src/full/…/overlay/FoldOverlayView.kt     draws the snapshot through the shader (half-res layer)
 wallpaper/DuoWallpaperService.kt          live wallpaper engine
 wallpaper/WallpaperImage.kt               picked image / generated default

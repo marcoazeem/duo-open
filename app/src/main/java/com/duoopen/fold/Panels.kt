@@ -19,3 +19,16 @@ fun Display?.isInnerPanel(): Boolean {
     if (a <= 0f || b <= 0f) return false
     return max(a, b) / min(a, b) < INNER_MAX_ASPECT
 }
+
+/**
+ * True for a built-in panel that is showing something: the default display,
+ * or any other display that isn't a presentation/virtual one (cast, DeX,
+ * MediaProjection), in any state but off. Doze counts — the cover screen
+ * plays the effect from its always-on clock.
+ */
+fun Display.isLivePanel(): Boolean {
+    if (!isValid) return false
+    val builtIn = displayId == Display.DEFAULT_DISPLAY ||
+        (flags and (Display.FLAG_PRESENTATION or Display.FLAG_PRIVATE)) == 0
+    return builtIn && state != Display.STATE_OFF && state != Display.STATE_UNKNOWN
+}
