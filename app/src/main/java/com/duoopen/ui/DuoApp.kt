@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -34,6 +35,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.duoopen.DualScreen
 import com.duoopen.fold.DuoShader
 import com.duoopen.fold.FoldLine
 import com.duoopen.fold.HingeAngleSource
@@ -49,7 +51,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun DuoApp(foldLineFlow: StateFlow<FoldLine?>) {
+fun DuoApp(foldLineFlow: StateFlow<FoldLine?>, dualScreen: DualScreen? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val config by DuoSettings.config.collectAsStateWithLifecycle()
@@ -93,6 +95,11 @@ fun DuoApp(foldLineFlow: StateFlow<FoldLine?>) {
     val overlayEnabled = remember(resumeTick) { OverlayFeature.isEnabled(context) }
     val liveBlurSupported = remember(resumeTick) { OverlayFeature.liveBlurSupported(context) }
     val overlayRunning by OverlayState.running.collectAsStateWithLifecycle()
+    val shizukuStatus by OverlayFeature.shizukuStatus.collectAsStateWithLifecycle()
+    LaunchedEffect(resumeTick) { OverlayFeature.refreshShizuku() }
+    val foldWallpaper = remember(resumeTick) { OverlayFeature.foldWallpaperActive(context) }
+    val dualStatus by (dualScreen?.status ?: kotlinx.coroutines.flow.MutableStateFlow("")).collectAsStateWithLifecycle()
+    val dualActive by (dualScreen?.active ?: kotlinx.coroutines.flow.MutableStateFlow(false)).collectAsStateWithLifecycle()
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
@@ -143,6 +150,18 @@ fun DuoApp(foldLineFlow: StateFlow<FoldLine?>) {
                 overlayAvailable = OverlayFeature.AVAILABLE,
                 overlayEnabled = overlayEnabled,
                 liveBlurSupported = liveBlurSupported,
+                dualStatus = dualStatus,
+                shizukuAvailable = OverlayFeature.SHIZUKU_AVAILABLE,
+                shizukuStatus = shizukuStatus,
+                shizukuReady = OverlayFeature.shizukuReady(),
+                shizukuInstalled = OverlayFeature.shizukuInstalled(),
+                onShizukuAuthorize = { OverlayFeature.requestShizuku() },
+                onOpenShizuku = { openShizuku(context) },
+                foldWallpaperActive = foldWallpaper,
+                angleFeedStatus = { OverlayFeature.angleFeedStatus() },
+                onOpenWallpaperSettings = { openWallpaperSettings(context) },
+                dualActive = dualActive,
+                onDualChange = { on -> if (on) dualScreen?.start() else dualScreen?.stop() },
                 onEnableOverlay = { openAccessibilitySettings(context) },
                 onTestOverlay = {
                     showSheet = false
@@ -165,6 +184,22 @@ private fun wallpaperComponent(context: Context) =
 
 private fun isWallpaperActive(context: Context): Boolean =
     WallpaperManager.getInstance(context).wallpaperInfo?.component == wallpaperComponent(context)
+
+private fun openShizuku(context: Context) {
+    val launch = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+    val intent = launch ?: Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://shizuku.rikka.app/"))
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    if (runCatching { context.startActivity(intent) }.isFailure) {
+        Toast.makeText(context, "Couldn't open Shizuku", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun openWallpaperSettings(context: Context) {
+    val intent = Intent(Intent.ACTION_SET_WALLPAPER).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    if (runCatching { context.startActivity(intent) }.isFailure) {
+        Toast.makeText(context, "Couldn't open wallpaper settings", Toast.LENGTH_SHORT).show()
+    }
+}
 
 private fun openAccessibilitySettings(context: Context) {
     val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)

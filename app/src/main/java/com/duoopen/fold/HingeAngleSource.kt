@@ -80,10 +80,34 @@ class HingeAngleSource(
 
     /** True when the best sensor we can get only reports the 0/90/180 stops. */
     val isCoarse: Boolean
-        get() = (active ?: candidates.firstOrNull())?.looksCoarse == true
+        get() = !externalActive && (active ?: candidates.firstOrNull())?.looksCoarse == true
 
     private var active: Stats? = null
     private var started = false
+
+    /**
+     * A continuous angle fed from outside the sensor framework (Shizuku mode:
+     * Samsung's fold wallpaper reports it). While fresh it overrides the
+     * sensors, which on a Galaxy Z Fold only give 0/90/180.
+     */
+    var externalActive = false
+        private set
+    private var externalLastUptime = 0L
+
+    fun feedExternal(angle: Float) {
+        if (!angle.isFinite()) return
+        val now = SystemClock.uptimeMillis()
+        externalActive = true
+        externalLastUptime = now
+        lastEventUptime = now
+        tickRate(now)
+        lastAngle = angle.coerceIn(0f, 180f)
+        onAngle(lastAngle)
+    }
+
+    fun clearExternal() {
+        externalActive = false
+    }
     private var lastEventUptime = 0L
     private var rateWindowStart = 0L
     private var rateWindowCount = 0
@@ -94,6 +118,11 @@ class HingeAngleSource(
 
     /** One line for the UI: which sensor, how fine, how fast, what it says. */
     fun statusText(): String {
+        if (externalActive) {
+            val raw = if (lastAngle.isNaN()) "—" else "%.1f°".format(lastAngle)
+            val rate = if (rateHz > 0f) "%.0f Hz".format(rateHz) else "idle"
+            return "Samsung fold wallpaper via Shizuku · continuous · $rate · raw $raw · ${lastEventAgeMs()} ms ago"
+        }
         val s = active ?: candidates.firstOrNull() ?: return "No hinge sensor found on this device"
         val res = if (s.resolution >= 1f) "${s.resolution.roundToInt()}°" else "%.2f°".format(s.resolution)
         val rate = if (rateHz > 0f) "%.0f Hz".format(rateHz) else "idle"
@@ -159,6 +188,12 @@ class HingeAngleSource(
     override fun onSensorChanged(event: SensorEvent) {
         val value = event.values.firstOrNull() ?: return
         val stats = candidates.firstOrNull { it.sensor == event.sensor } ?: return
+        // An external continuous source wins while it's alive; if it goes
+        // quiet the sensors take over again.
+        if (externalActive) {
+            if (SystemClock.uptimeMillis() - externalLastUptime < EXTERNAL_STALE_MS) return
+            externalActive = false
+        }
         // Not an angle in degrees (state code, radians, normalized): ignore.
         if (!value.isFinite() || value < -PLAUSIBLE_SLACK || value > 180f + PLAUSIBLE_SLACK) return
         stats.observe(value)
@@ -240,6 +275,7 @@ class HingeAngleSource(
         const val COARSE_RESOLUTION = 45f
         const val COARSE_MIN_EVENTS = 6
         const val MAX_DISTINCT = 8
+        const val EXTERNAL_STALE_MS = 3_000L
         val STOPS = intArrayOf(0, 90, 180)
     }
 }

@@ -63,6 +63,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -86,4 +87,11 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.window:window:1.2.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // Full edition only: optional Shizuku mode (ADB-level helpers — unlimited
+    // display capture with our overlay excluded, and Samsung's continuous
+    // hinge angle). Technique credit: joeconsorti/duo-fold-live (MIT).
+    "fullImplementation"("dev.rikka.shizuku:api:13.1.5")
+    "fullImplementation"("dev.rikka.shizuku:provider:13.1.5")
+    "fullImplementation"("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
 }

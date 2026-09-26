@@ -12,6 +12,9 @@ import com.duoopen.fold.HingeAngleSource
 import com.duoopen.fold.TiltFollower
 import com.duoopen.fold.isInnerPanel
 import com.duoopen.settings.DuoSettings
+import com.duoopen.shell.ShizukuBridge
+import android.view.SurfaceControl
+import android.view.View
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,6 +54,8 @@ class PanelEngine(
     /** True when another engine is live on an inner panel right now. */
     private val hasLiveInnerElsewhere: () -> Boolean,
     private val onShowingChanged: () -> Unit,
+    /** Last capture of each panel kind, shared by all engines (see [SnapshotCache]). */
+    private val cache: SnapshotCache,
 ) {
     private enum class Phase { IDLE, CAPTURING, SHOWING }
 
@@ -79,6 +84,10 @@ class PanelEngine(
     private var captureAttempt = 0
     /** Overlay is resolving on a timer, ignoring the hinge (see [show]). */
     private var timedResolve = false
+    /** Showing a cached picture of this panel while a fresh capture is in flight. */
+    private var bridging = false
+    /** Live re-capture loop (Shizuku mode) is scheduled. */
+    private var liveLoop = false
 
     val showing: Boolean get() = phase == Phase.SHOWING
 
@@ -128,9 +137,18 @@ class PanelEngine(
         evaluate()
         val tilt = tiltFor(angle)
         if (tilt < DuoShader.FLAT_EPSILON && phase == Phase.SHOWING && !demoRunning) {
-            // At rest: drop the overlay now rather than easing the last degrees.
-            // (Also ends a timed play early if the hinge is back at rest.)
-            dismiss(fadeMs = FADE_OUT_FLAT_MS)
+            val f = follower
+            if (timedResolve && hinge.isCoarse && f != null && f.current > DuoShader.FLAT_EPSILON) {
+                // Stops-only sensor: the rest stop (180° / 0°) is the first news
+                // that the fold has finished, so clear from here — the frost
+                // was held meanwhile. The follower dismisses at flat.
+                handler.removeCallbacks(peakHold)
+                f.tauS = COARSE_CLEAR_TAU_S
+                f.setTarget(0f)
+            } else {
+                // At rest: drop the overlay now rather than easing the last degrees.
+                dismiss(fadeMs = FADE_OUT_FLAT_MS)
+            }
         } else if (!timedResolve) {
             follower?.setTarget(tilt)
         }
@@ -185,20 +203,33 @@ class PanelEngine(
         if (liveMode()) {
             phase = Phase.CAPTURING // same gate as a capture in flight, resolved synchronously
             present(bitmap = null, afterSwap = afterSwap, startTilt = startTilt, t0 = SystemClock.uptimeMillis())
-        } else {
-            startCapture(afterSwap, startTilt)
+            return
         }
+        // A panel that has just switched on takes ~0.3 s to screenshot. Start
+        // at once with the picture it showed last time and swap in the fresh
+        // capture when it lands — the frost hides the difference.
+        if (afterSwap && startTilt == null && DuoSettings.config.value.instantStart) {
+            val bounds = windowManager.maximumWindowMetrics.bounds
+            val stale = cache.get(innerPanel, bounds.width(), bounds.height())
+            if (stale != null) {
+                phase = Phase.CAPTURING
+                Log.i(TAG, "display $displayId: bridging with a ${cache.ageMs(innerPanel)}ms-old snapshot")
+                present(stale, afterSwap = true, startTilt = null, t0 = SystemClock.uptimeMillis())
+                bridging = phase == Phase.SHOWING
+            }
+        }
+        startCapture(afterSwap, startTilt)
     }
 
     private fun startCapture(afterSwap: Boolean, startTilt: Float? = null) {
-        phase = Phase.CAPTURING
+        if (!bridging) phase = Phase.CAPTURING
         capture(gen = ++captureGen, attempt = 1, afterSwap = afterSwap, startTilt = startTilt)
     }
 
     private fun capture(gen: Int, attempt: Int, afterSwap: Boolean, startTilt: Float?) {
         val t0 = SystemClock.uptimeMillis()
         captureAttempt = attempt
-        fun stale() = gen != captureGen || phase != Phase.CAPTURING
+        fun stale() = gen != captureGen || (phase != Phase.CAPTURING && !bridging)
         // The framework refuses captures closer than ~333 ms apart, measured
         // from the previous request — so a slow capture costs no extra wait.
         fun retry() {
@@ -211,10 +242,61 @@ class PanelEngine(
         handler.postDelayed({
             if (!stale() && captureAttempt == attempt) {
                 Log.w(TAG, "display $displayId: capture $attempt timed out; giving up")
-                phase = Phase.IDLE
-                demoRunning = false
+                if (bridging) {
+                    bridging = false // keep playing on the stale picture
+                } else {
+                    phase = Phase.IDLE
+                    demoRunning = false
+                }
             }
         }, CAPTURE_TIMEOUT_MS)
+        // Shizuku mode: the shell-side capture has no rate limit and takes
+        // ~50 ms even on a waking panel. Falls back to the accessibility
+        // screenshot if it fails.
+        if (shellCapture()) {
+            scope.launch {
+                val bitmap = withContext(Dispatchers.IO) {
+                    ShizukuBridge.capture(displayId, excludedLayers(), INITIAL_SHELL_SCALE)
+                }
+                if (stale()) return@launch
+                if (bitmap == null) {
+                    Log.i(TAG, "display $displayId: shell capture unavailable; using accessibility screenshot")
+                    accessibilityCapture(gen, attempt, afterSwap, startTilt, t0, ::retry, ::stale)
+                    return@launch
+                }
+                if (afterSwap && attempt < MAX_CAPTURE_ATTEMPTS) {
+                    val black = withContext(Dispatchers.Default) { isMostlyBlack(bitmap) }
+                    if (stale()) return@launch
+                    if (black && !demoRunning) {
+                        Log.i(TAG, "display $displayId: shell capture $attempt is black after ${SystemClock.uptimeMillis() - t0}ms; retrying")
+                        handler.postDelayed({ if (!stale()) capture(gen, attempt + 1, afterSwap, startTilt) }, SHELL_RETRY_MS)
+                        return@launch
+                    }
+                }
+                onCaptured(bitmap, afterSwap, startTilt, t0)
+            }
+            return
+        }
+        accessibilityCapture(gen, attempt, afterSwap, startTilt, t0, ::retry, ::stale)
+    }
+
+    private fun shellCapture(): Boolean = DuoSettings.config.value.shizukuCapture && ShizukuBridge.ready
+
+    /** Our own overlay's layer, so a capture taken while it's up sees the screen beneath it. */
+    private fun excludedLayers(): List<SurfaceControl> {
+        val view = (surface as? SnapshotSurface)?.view ?: return emptyList()
+        return listOfNotNull(rootSurfaceControl(view))
+    }
+
+    private fun accessibilityCapture(
+        gen: Int,
+        attempt: Int,
+        afterSwap: Boolean,
+        startTilt: Float?,
+        t0: Long,
+        retry: () -> Unit,
+        stale: () -> Boolean,
+    ) {
         service.takeScreenshot(displayId, service.mainExecutor, object : AccessibilityService.TakeScreenshotCallback {
             override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
                 val buffer = result.hardwareBuffer
@@ -227,7 +309,7 @@ class PanelEngine(
                 }
                 if (bitmap == null) {
                     Log.w(TAG, "display $displayId: screenshot buffer could not be wrapped")
-                    phase = Phase.IDLE
+                    if (bridging) bridging = false else phase = Phase.IDLE
                     return
                 }
                 if (!afterSwap || attempt >= MAX_CAPTURE_ATTEMPTS) {
@@ -258,6 +340,8 @@ class PanelEngine(
                     attempt < MAX_CAPTURE_ATTEMPTS
                 ) {
                     retry()
+                } else if (bridging) {
+                    bridging = false // secure content etc.: keep playing on the stale picture
                 } else {
                     phase = Phase.IDLE
                     demoRunning = false
@@ -266,8 +350,19 @@ class PanelEngine(
         })
     }
 
-    private fun onCaptured(bitmap: Bitmap, afterSwap: Boolean, startTilt: Float?, t0: Long) =
+    private fun onCaptured(bitmap: Bitmap, afterSwap: Boolean, startTilt: Float?, t0: Long) {
+        cache.put(innerPanel, bitmap)
+        if (bridging) {
+            bridging = false
+            val s = surface as? SnapshotSurface
+            if (s != null && phase == Phase.SHOWING) {
+                Log.i(TAG, "display $displayId: fresh capture (${SystemClock.uptimeMillis() - t0}ms) replaces the bridge at tilt=${s.tilt}")
+                s.replaceSnapshot(bitmap)
+            }
+            return
+        }
         present(bitmap, afterSwap, startTilt, t0)
+    }
 
     /**
      * Puts the effect on screen: [bitmap] through the shader, or with no
@@ -275,15 +370,16 @@ class PanelEngine(
      */
     private fun present(bitmap: Bitmap?, afterSwap: Boolean, startTilt: Float?, t0: Long) {
         if (phase != Phase.CAPTURING) {
-            bitmap?.recycle()
             return
         }
         val angle = hinge.lastAngle
         val live = startTilt == null
         val coarse = live && hinge.isCoarse
         val peak = DuoShader.MAX_TILT * DuoSettings.config.value.intensity.coerceAtMost(1f)
-        // A stops-only sensor can't be followed, so each stop change plays a
-        // fixed ease: frost in on leaving rest, frost out on the fresh panel.
+        // A stops-only sensor can't be followed. Between stops the fold is in
+        // motion, so: frost in on leaving rest and hold; on the fresh panel
+        // start frosted and hold; clear only when the rest stop arrives (see
+        // onHinge) or the hold cap expires.
         val tilt = startTilt ?: if (coarse) (if (afterSwap) peak else DuoShader.FLAT_EPSILON * 1.2f) else currentTilt()
         // A capture lands late; the live blur is instant, so it's never "too late".
         val nearlyDone = bitmap != null && afterSwap && live &&
@@ -291,7 +387,6 @@ class PanelEngine(
         if (tilt < DuoShader.FLAT_EPSILON || nearlyDone) {
             // Too late to be worth a pop-in: the fold is (almost) over.
             Log.i(TAG, "display $displayId: hinge=$angle by capture time (${SystemClock.uptimeMillis() - t0}ms); skipping")
-            bitmap?.recycle()
             phase = Phase.IDLE
             return
         }
@@ -301,12 +396,12 @@ class PanelEngine(
         // phone is shut anyway, so it reads as the cover settling into focus.
         // A cover lit alongside the inner panel keeps hearing the hinge.
         val easeTo = when {
+            coarse -> peak
             afterSwap && !innerPanel && !concurrentCover() && live -> 0f
-            coarse -> if (afterSwap) 0f else peak
             else -> null
         }
         val how = if (bitmap != null) "${bitmap.width}x${bitmap.height} snapshot (capture ${SystemClock.uptimeMillis() - t0}ms)" else "live blur"
-        Log.i(TAG, "display $displayId: showing $how at tilt=$tilt${easeTo?.let { " easing to $it" } ?: ""}")
+        Log.i(TAG, "display $displayId: showing $how at tilt=$tilt${easeTo?.let { " easing to $it" } ?: ""}${if (bitmap != null && shellCapture()) " [shizuku]" else ""}")
         show(bitmap, tilt, fadeIn = afterSwap, easeTo = easeTo)
     }
 
@@ -348,12 +443,12 @@ class PanelEngine(
         }
         if (created == null) {
             Log.e(TAG, "display $displayId: could not attach overlay")
-            bitmap?.recycle()
             phase = Phase.IDLE
             return
         }
         created.tilt = startTilt
         surface = created
+        if (bitmap != null && shellCapture()) startLiveLoop()
         phase = Phase.SHOWING
         onShowingChanged()
         if (fadeIn) {
@@ -369,7 +464,9 @@ class PanelEngine(
         if (easeTo != null) {
             follower?.tauS = if (hinge.isCoarse) COARSE_EASE_TAU_S else TIMED_RESOLVE_TAU_S
             follower?.setTarget(easeTo)
-            if (easeTo > DuoShader.FLAT_EPSILON) handler.postDelayed(peakHold, PEAK_HOLD_MS)
+            if (easeTo > DuoShader.FLAT_EPSILON) {
+                handler.postDelayed(peakHold, if (hinge.isCoarse) COARSE_PEAK_HOLD_MS else PEAK_HOLD_MS)
+            }
         } else {
             handler.postDelayed(settleCheck, SETTLE_TIMEOUT_MS)
         }
@@ -390,13 +487,43 @@ class PanelEngine(
         s.detach()
     }
 
+    /**
+     * Shizuku mode: keep re-capturing the screen beneath the overlay at a
+     * reduced scale, so the picture under the frost is live instead of frozen.
+     */
+    private fun startLiveLoop() {
+        if (liveLoop) return
+        liveLoop = true
+        val myGen = captureGen
+        var frames = 0
+        fun tick() {
+            if (!liveLoop || phase != Phase.SHOWING || myGen != captureGen) { liveLoop = false; return }
+            val s = surface as? SnapshotSurface
+            if (s == null || s.tilt < DuoShader.FLAT_EPSILON) { handler.postDelayed({ tick() }, LIVE_INTERVAL_MS); return }
+            val excluded = excludedLayers()
+            if (excluded.isEmpty()) { handler.postDelayed({ tick() }, LIVE_INTERVAL_MS); return }
+            scope.launch {
+                val frame = withContext(Dispatchers.IO) { ShizukuBridge.capture(displayId, excluded, LIVE_SHELL_SCALE) }
+                if (liveLoop && phase == Phase.SHOWING && myGen == captureGen && frame != null && !bridging) {
+                    (surface as? SnapshotSurface)?.replaceSnapshot(frame)
+                    frames++
+                    if (frames == 1 || frames % 25 == 0) Log.i(TAG, "display $displayId: live frame $frames (${frame.width}x${frame.height})")
+                }
+                handler.postDelayed({ tick() }, LIVE_INTERVAL_MS)
+            }
+        }
+        handler.postDelayed({ tick() }, LIVE_INTERVAL_MS)
+    }
+
     private fun clearOverlayState() {
+        liveLoop = false
         handler.removeCallbacks(settleCheck)
         handler.removeCallbacks(peakHold)
         follower?.cancel()
         follower = null
         surface = null
         timedResolve = false
+        bridging = false
         phase = Phase.IDLE
         onShowingChanged()
     }
@@ -456,10 +583,14 @@ class PanelEngine(
         const val BLACK_THRESHOLD = 30
         /** Ease time constant for the timed resolve (≈ 250 ms to settle). */
         const val TIMED_RESOLVE_TAU_S = 0.07f
-        /** Slower ease for stops-only sensors, so a play reads as a fold (≈ 450 ms). */
+        /** Slower ease for stops-only sensors, so a frost-in reads as a fold (≈ 450 ms). */
         const val COARSE_EASE_TAU_S = 0.12f
+        /** Clear-out once a stops-only sensor reports the rest stop (≈ 300 ms). */
+        const val COARSE_CLEAR_TAU_S = 0.08f
         /** How long a timed frost-up stays before it fades, absent a panel swap. */
         const val PEAK_HOLD_MS = 1_200L
+        /** Stops-only sensors: hold the frost between stops, but not forever (flex mode). */
+        const val COARSE_PEAK_HOLD_MS = 2_500L
         /** Tilt hysteresis for leaving a rest pose, so hinge jitter doesn't fire. */
         const val REST_LEAVE_TILT = 3f
         /** After a swap, don't bother if the fold is nearly finished by capture time. */
@@ -469,5 +600,21 @@ class PanelEngine(
         const val FADE_IN_MS = 140L
         const val FADE_OUT_FLAT_MS = 120L
         const val FADE_OUT_STALLED_MS = 300L
+        /** Shizuku capture: full-size first frame, half-size live frames at ~12 fps. */
+        const val INITIAL_SHELL_SCALE = 1f
+        const val LIVE_SHELL_SCALE = 0.5f
+        const val LIVE_INTERVAL_MS = 80L
+        const val SHELL_RETRY_MS = 60L
+
+        /**
+         * The window's root layer (hidden `ViewRootImpl.getSurfaceControl`),
+         * needed to exclude our overlay from a display capture. Null if the
+         * hidden-API exemption isn't in place.
+         */
+        fun rootSurfaceControl(view: View): SurfaceControl? = runCatching {
+            val root = view.rootView.parent ?: return null
+            val sc = root.javaClass.getMethod("getSurfaceControl").invoke(root) as? SurfaceControl
+            sc?.takeIf { it.isValid }
+        }.getOrNull()
     }
 }

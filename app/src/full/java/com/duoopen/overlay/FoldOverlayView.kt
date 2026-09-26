@@ -51,6 +51,12 @@ class FoldOverlayView(
             fold.config = value
         }
 
+    /** Swaps the picture under the effect in place (e.g. a stale bridge → the fresh capture). */
+    fun setSnapshot(bitmap: Bitmap) {
+        fold.setSnapshot(bitmap)
+        flat.setSnapshot(bitmap)
+    }
+
     init {
         setBackgroundColor(Color.BLACK)
         addView(flat)
@@ -78,10 +84,17 @@ class FoldOverlayView(
     private fun exactly(px: Int) = MeasureSpec.makeMeasureSpec(px, MeasureSpec.EXACTLY)
 
     /** Snapshot drawn 1:1 — pixel-identical to the live screen underneath. */
-    private class FlatView(context: Context, private val snapshot: Bitmap) : View(context) {
+    private class FlatView(context: Context, private var snapshot: Bitmap) : View(context) {
         private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-        private val shader = BitmapShader(snapshot, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        private var shader = BitmapShader(snapshot, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
         private val matrix = Matrix()
+
+        fun setSnapshot(bitmap: Bitmap) {
+            snapshot = bitmap
+            shader = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+            if (width > 0 && height > 0) onSizeChanged(width, height, width, height)
+            invalidate()
+        }
 
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
             matrix.setScale(w / snapshot.width.toFloat(), h / snapshot.height.toFloat())
@@ -97,15 +110,22 @@ class FoldOverlayView(
     /** Snapshot through the fold shader, at reduced resolution. */
     private class FoldView(
         context: Context,
-        private val snapshot: Bitmap,
+        private var snapshot: Bitmap,
         renderScale: Float,
         private val foldLine: ((w: Float, h: Float, config: DuoConfig) -> FoldLine)?,
     ) : View(context) {
         private val shader: RuntimeShader? = DuoShader.create(context)
         private val pxPerMm = DuoShader.pxPerMm(context) / renderScale
         private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-        private val image = BitmapShader(snapshot, Shader.TileMode.DECAL, Shader.TileMode.DECAL)
+        private var image = BitmapShader(snapshot, Shader.TileMode.DECAL, Shader.TileMode.DECAL)
         private val matrix = Matrix()
+
+        fun setSnapshot(bitmap: Bitmap) {
+            snapshot = bitmap
+            image = BitmapShader(bitmap, Shader.TileMode.DECAL, Shader.TileMode.DECAL)
+            if (width > 0 && height > 0) onSizeChanged(width, height, width, height)
+            invalidate()
+        }
 
         var config: DuoConfig = DuoSettings.config.value
 

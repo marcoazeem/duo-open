@@ -59,7 +59,7 @@ class SnapshotSurface(
     config: DuoConfig,
     foldLine: (w: Float, h: Float, config: DuoConfig) -> FoldLine,
 ) : FoldSurface {
-    private val view = FoldOverlayView(context, bitmap, foldLine).also { it.config = config }
+    val view = FoldOverlayView(context, bitmap, foldLine).also { it.config = config }
     val attached: Boolean
 
     init {
@@ -80,6 +80,9 @@ class SnapshotSurface(
         set(value) {
             view.tilt = value
         }
+
+    /** Swap a stale bridging picture for the fresh capture, keeping the current tilt. */
+    fun replaceSnapshot(bitmap: Bitmap) = view.setSnapshot(bitmap)
 
     override fun fadeIn(durationMs: Long) {
         view.alpha = 0f

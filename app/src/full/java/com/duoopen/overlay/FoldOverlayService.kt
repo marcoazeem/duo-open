@@ -17,6 +17,10 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import com.duoopen.fold.HingeAngleSource
 import com.duoopen.fold.isLivePanel
+import com.duoopen.settings.DuoSettings
+import com.duoopen.shell.ShizukuBridge
+import com.duoopen.shell.WallpaperAngleFeed
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 
@@ -40,6 +44,8 @@ class FoldOverlayService : AccessibilityService() {
     private lateinit var hinge: HingeAngleSource
     private lateinit var displayManager: DisplayManager
     private val engines = LinkedHashMap<Int, PanelEngine>()
+    private val snapshots = SnapshotCache(maxAgeMs = SNAPSHOT_MAX_AGE_MS)
+    private var angleFeed: WallpaperAngleFeed? = null
 
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = syncDisplays()
@@ -64,12 +70,17 @@ class FoldOverlayService : AccessibilityService() {
         displayManager.registerDisplayListener(displayListener, handler)
         hinge = HingeAngleSource(this) { onHinge(it) }
         hinge.start()
+        ShizukuBridge.init(this)
+        angleFeed = WallpaperAngleFeed(this, handler, hinge)
+        scope.launch { ShizukuBridge.state.collect { syncAngleFeed() } }
+        scope.launch { DuoSettings.config.collect { syncAngleFeed() } }
         syncDisplays()
         Log.i(TAG, "connected; hinge=${hinge.sensor?.name} live displays=${engines.keys}")
     }
 
     override fun onDestroy() {
         instance = null
+        angleFeed?.stop()
         if (receiverRegistered) unregisterReceiver(demoReceiver)
         hinge.stop()
         displayManager.unregisterDisplayListener(displayListener)
@@ -111,12 +122,23 @@ class FoldOverlayService : AccessibilityService() {
                     scope = scope,
                     hasLiveInnerElsewhere = { engines.values.any { it !== engines[id] && it.innerPanel } },
                     onShowingChanged = ::updateRunning,
+                    cache = snapshots,
                 )
             }
         }
         if (gone.isNotEmpty()) updateRunning()
         for (e in engines.values.toList()) e.evaluate()
+        angleFeed?.onDisplayChanged()
     }
+
+    /** Samsung continuous angle via Shizuku + fold wallpaper, when everything lines up. */
+    private fun syncAngleFeed() {
+        val feed = angleFeed ?: return
+        val want = DuoSettings.config.value.shizukuAngle && ShizukuBridge.ready && WallpaperAngleFeed.foldWallpaperActive(this)
+        if (want && !feed.active) feed.start() else if (!want && feed.active) feed.stop()
+    }
+
+    fun angleFeedStatus(): String = angleFeed?.status ?: "Idle"
 
     private fun updateRunning() {
         OverlayState.setRunning(engines.values.any { it.showing })
@@ -133,6 +155,8 @@ class FoldOverlayService : AccessibilityService() {
         private const val TAG = "DuoOverlay"
         const val ACTION_DEMO = "com.duoopen.DEMO"
         private const val TEST_DISPLAYS_SETTING = "duoopen_test_displays"
+        /** How old a panel's last picture may be and still bridge the next fold. */
+        private const val SNAPSHOT_MAX_AGE_MS = 15 * 60_000L
 
         /** The connected service, for in-process control from the app. */
         @Volatile

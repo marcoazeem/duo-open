@@ -168,6 +168,9 @@ watch it with `adb logcat -s DuoOverlay`.
 
 ```
 app/src/main/res/raw/duo_unfold.agsl      fold shader (hinge line, moving side, eye)
+src/full/…/shell/DuoShellService.kt       Shizuku user service: display capture, wallpaper angle log reader
+src/full/…/shell/ShizukuBridge.kt         app side: state, permission, binder calls
+src/full/…/shell/WallpaperAngleFeed.kt    pings Samsung's fold wallpaper, feeds the continuous angle
 fold/DuoShader.kt                         uniforms, hinge→tilt mapping, fold placement
 fold/HingeAngleSource.kt                  hinge sensor picker (vendor fallback, coarse detection, report)
 fold/TiltFollower.kt                      per-vsync ease that hides the sensor's 1° steps
@@ -228,7 +231,47 @@ Other takes on the same idea, useful for comparing approaches:
   [Ant-lib/hingewave](https://github.com/Ant-lib/hingewave) — live-wallpaper
   only variants.
 
+## Shizuku mode (optional)
+
+[Shizuku](https://shizuku.rikka.app/) lends apps ADB-level helpers without
+root (you start it once per boot over wireless debugging or a computer).
+When Duo Open is authorised in Shizuku, **Tune → Shizuku mode** offers:
+
+- **Fast live capture.** The screen is captured through a shell-side helper
+  using the hidden WindowManager display capture, with Duo Open's own overlay
+  excluded — no one-per-333 ms limit, ~50 ms even on a panel that has just
+  switched on, and the picture under the frost is re-captured at ~12 fps so
+  it stays *live* instead of frozen.
+- **Continuous hinge angle on Samsung foldables.** The public sensor on a
+  Galaxy Z Fold only reports 0°/90°/180°, but Samsung's own "Fold interactive"
+  home wallpaper receives the real angle and logs it whenever it's sent a
+  wallpaper command. Duo Open pings it ~30×/s and the shell helper reads the
+  log, so the fold tracks your hand. Needs that wallpaper set as the home
+  wallpaper (Samsung's wallpaper settings; it's one of the built-ins).
+
+Both techniques were worked out by **Duo Fold Live** — see Credits. Without
+Shizuku everything falls back to the accessibility screenshot and the public
+sensor, exactly as before.
+
+## Credits
+
+- **[Atomicx7/Duo-animation](https://github.com/Atomicx7/Duo-animation)** —
+  the frosted-glass fold shader (Metal → AGSL port) this project started from.
+- **[joeconsorti/duo-fold-live](https://github.com/joeconsorti/duo-fold-live)**
+  (MIT) — an independent Fold-8-only take on the same idea. Its authors
+  found the Samsung fold-wallpaper angle source and the shell-side display
+  capture with layer exclusion; Duo Open's Shizuku mode re-implements those
+  techniques and follows their capture-API resolution and log-format
+  findings. Thank you.
+- **[Shizuku](https://github.com/RikkaApps/Shizuku)** (Apache-2.0) — the
+  ADB-assisted access behind Shizuku mode.
+- **[AndroidHiddenApiBypass](https://github.com/LSPosed/AndroidHiddenApiBypass)**
+  (Apache-2.0) — lets the app read its own window's layer id for capture
+  exclusion.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). These credits don't
+imply the upstream authors endorse this app.
+
 ## License
 
-MIT — see [LICENSE](LICENSE). The shader is adapted from
-[Atomicx7/Duo-animation](https://github.com/Atomicx7/Duo-animation).
+MIT — see [LICENSE](LICENSE).

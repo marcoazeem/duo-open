@@ -63,6 +63,18 @@ fun ControlSheet(
     overlayAvailable: Boolean,
     overlayEnabled: Boolean,
     liveBlurSupported: Boolean,
+    dualStatus: String,
+    dualActive: Boolean,
+    onDualChange: (Boolean) -> Unit,
+    shizukuAvailable: Boolean,
+    shizukuStatus: String,
+    shizukuReady: Boolean,
+    shizukuInstalled: Boolean,
+    onShizukuAuthorize: () -> Unit,
+    onOpenShizuku: () -> Unit,
+    foldWallpaperActive: Boolean,
+    angleFeedStatus: () -> String,
+    onOpenWallpaperSettings: () -> Unit,
     onEnableOverlay: () -> Unit,
     onTestOverlay: () -> Unit,
     onDismiss: () -> Unit,
@@ -156,6 +168,21 @@ fun ControlSheet(
                 if (!liveBlurSupported) {
                     Hint("Live blur isn't available: this device has window blur turned off.", warn = true)
                 }
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Start instantly after a screen switches on", style = MaterialTheme.typography.titleSmall)
+                        Hint(
+                            "Begins from that screen's last picture and swaps in a fresh capture ~0.3 s later. " +
+                                "Off: waits for the fresh capture, so the frost appears late. Snapshot mode only.",
+                        )
+                    }
+                    Switch(
+                        checked = config.instantStart,
+                        onCheckedChange = { v -> DuoSettings.update { it.copy(instantStart = v) } },
+                        enabled = !(config.liveBlur && liveBlurSupported),
+                    )
+                }
             }
 
             // 3. Look ---------------------------------------------------------
@@ -231,7 +258,65 @@ fun ControlSheet(
                 OutlinedButton(onClick = onDefaultImage, modifier = Modifier.weight(1f)) { Text("Use default") }
             }
 
-            // 6. Hinge sensor -------------------------------------------------
+            // 5b. Shizuku mode --------------------------------------------------
+            if (shizukuAvailable) {
+                Divider()
+                Section(
+                    "Shizuku mode (optional)",
+                    "Shizuku gives apps ADB-level helpers without root. With it, Duo Open captures the screen " +
+                        "with no rate limit and keeps the picture under the frost live, and on Samsung foldables " +
+                        "reads the real hinge angle instead of just 0° / 90° / 180°.",
+                )
+                Hint(shizukuStatus, warn = !shizukuReady)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (!shizukuReady) {
+                        Button(onClick = onShizukuAuthorize, modifier = Modifier.weight(1f), enabled = shizukuInstalled) { Text("Authorise") }
+                    }
+                    OutlinedButton(onClick = onOpenShizuku, modifier = Modifier.weight(1f)) {
+                        Text(if (shizukuInstalled) "Open Shizuku" else "Get Shizuku")
+                    }
+                }
+                if (shizukuReady) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Fast live capture", style = MaterialTheme.typography.titleSmall)
+                            Hint("Screen captured through Shizuku: instant after a panel switches, and the content under the frost keeps moving.")
+                        }
+                        Switch(checked = config.shizukuCapture, onCheckedChange = { v -> DuoSettings.update { it.copy(shizukuCapture = v) } })
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Continuous hinge angle (Samsung)", style = MaterialTheme.typography.titleSmall)
+                            Hint(
+                                if (foldWallpaperActive) "Samsung's Fold interactive wallpaper is set — the real angle is read from it. " + angleFeedStatus()
+                                else "Needs Samsung's built-in “Fold interactive” wallpaper as the home wallpaper (it's what receives the real angle). Set it, then come back.",
+                                warn = !foldWallpaperActive,
+                            )
+                        }
+                        Switch(checked = config.shizukuAngle, onCheckedChange = { v -> DuoSettings.update { it.copy(shizukuAngle = v) } })
+                    }
+                    if (!foldWallpaperActive) {
+                        TextButton(onClick = onOpenWallpaperSettings) { Text("Open wallpaper settings") }
+                    }
+                }
+            }
+
+            // 6. Both screens at once ------------------------------------------
+            Divider()
+            Section(
+                "Both screens at once (experimental)",
+                "Some foldables can light the cover screen while the inner screen is in use. " +
+                    "Turn this on with the phone open, then fold it: the whole-screen fold runs on both panels with no gap.",
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Hint(dualStatus, modifier = Modifier.weight(1f))
+                Switch(checked = dualActive, onCheckedChange = onDualChange, enabled = dualStatus.startsWith("Available") || dualActive)
+            }
+
+            // 7. Hinge sensor -------------------------------------------------
             Divider()
             Section("Hinge sensor", "Diagnostics. Nothing here changes the look.")
             Hint(sensorStatus)
@@ -279,9 +364,10 @@ private fun Section(title: String, hint: String? = null) {
 private fun Divider() = HorizontalDivider(Modifier.padding(vertical = 14.dp))
 
 @Composable
-private fun Hint(text: String, warn: Boolean = false) {
+private fun Hint(text: String, warn: Boolean = false, modifier: Modifier = Modifier) {
     Text(
         text,
+        modifier = modifier,
         style = MaterialTheme.typography.bodySmall,
         color = if (warn) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
     )

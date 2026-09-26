@@ -26,6 +26,14 @@ import kotlinx.coroutines.flow.asStateFlow
  * @param liveBlur Full-screen fold draws with the system's window blur on the
  *   live screen instead of warping a screenshot. No capture, no delay, but a
  *   stepped frost and no perspective; ignored where cross-window blur is off.
+ * @param instantStart After a panel switches on, start the whole-screen fold
+ *   at once from that panel's last picture and swap in the fresh capture when
+ *   it lands (~0.3 s), instead of showing nothing until then.
+ * @param shizukuCapture With Shizuku authorised, capture through the shell
+ *   helper (no rate limit, live frames under the frost) instead of the
+ *   accessibility screenshot.
+ * @param shizukuAngle With Shizuku authorised and Samsung's Fold interactive
+ *   wallpaper set, read the continuous hinge angle from it.
  * @param imageVersion Bumped whenever the wallpaper image changes.
  */
 data class DuoConfig(
@@ -37,6 +45,9 @@ data class DuoConfig(
     val movingSide: Int = -1,
     val coverFrostFromRight: Boolean = true,
     val liveBlur: Boolean = false,
+    val instantStart: Boolean = true,
+    val shizukuCapture: Boolean = true,
+    val shizukuAngle: Boolean = true,
     val imageVersion: Long = 0L,
 )
 
@@ -59,6 +70,9 @@ object DuoSettings {
             movingSide = prefs.getInt("movingSide", d.movingSide),
             coverFrostFromRight = prefs.getBoolean("coverFrostFromRight", d.coverFrostFromRight),
             liveBlur = prefs.getBoolean("liveBlur", d.liveBlur),
+            instantStart = prefs.getBoolean("instantStart", d.instantStart),
+            shizukuCapture = prefs.getBoolean("shizukuCapture", d.shizukuCapture),
+            shizukuAngle = prefs.getBoolean("shizukuAngle", d.shizukuAngle),
             imageVersion = prefs.getLong("imageVersion", d.imageVersion),
         )
     }
@@ -76,6 +90,9 @@ object DuoSettings {
             putInt("movingSide", next.movingSide)
             putBoolean("coverFrostFromRight", next.coverFrostFromRight)
             putBoolean("liveBlur", next.liveBlur)
+            putBoolean("instantStart", next.instantStart)
+            putBoolean("shizukuCapture", next.shizukuCapture)
+            putBoolean("shizukuAngle", next.shizukuAngle)
             putLong("imageVersion", next.imageVersion)
         }
     }
@@ -87,6 +104,9 @@ object DuoSettings {
             movingSide = it.movingSide,
             coverFrostFromRight = it.coverFrostFromRight,
             liveBlur = it.liveBlur,
+            instantStart = it.instantStart,
+            shizukuCapture = it.shizukuCapture,
+            shizukuAngle = it.shizukuAngle,
             imageVersion = it.imageVersion,
         )
     }
