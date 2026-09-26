@@ -93,7 +93,9 @@ class FoldOverlayService : AccessibilityService() {
         // `adb shell settings put global duoopen_test_displays 1` lets a
         // simulated secondary display stand in for a second panel (see Panels.kt).
         val testDisplays = Settings.Global.getInt(contentResolver, TEST_DISPLAYS_SETTING, 0) != 0
-        val live = displayManager.displays.filter { it.isLivePanel(includePresentation = testDisplays) }
+        val defaultName = runCatching { displayManager.getDisplay(Display.DEFAULT_DISPLAY)?.name }.getOrNull()
+        val live = displayManager.displays
+            .filter { it.isLivePanel(defaultDisplayName = defaultName, includePresentation = testDisplays) }
             .associateBy { it.displayId }
         val gone = engines.keys.filter { it !in live }
         for (id in gone) {

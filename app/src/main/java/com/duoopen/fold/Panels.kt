@@ -30,9 +30,14 @@ fun Display?.isInnerPanel(): Boolean {
  *   for testing the two-panels-lit path on an emulator with a developer-option
  *   "simulated secondary display" (`settings put global overlay_display_devices …`).
  */
-fun Display.isLivePanel(includePresentation: Boolean = false): Boolean {
+fun Display.isLivePanel(defaultDisplayName: String?, includePresentation: Boolean = false): Boolean {
     if (!isValid) return false
     val rejected = if (includePresentation) Display.FLAG_PRIVATE else Display.FLAG_PRESENTATION or Display.FLAG_PRIVATE
-    val builtIn = displayId == Display.DEFAULT_DISPLAY || (flags and rejected) == 0
+    // Samsung foldables expose the inner panel as a second logical display
+    // that carries FLAG_PRESENTATION (Galaxy Z Fold 8: display 1, 2448x1848).
+    // It shares the built-in panels' name with display 0 ("Built-in Screen"),
+    // which cast, DeX and virtual displays don't, so the name is the tell.
+    val sameNameAsDefault = defaultDisplayName != null && name == defaultDisplayName && (flags and Display.FLAG_PRIVATE) == 0
+    val builtIn = displayId == Display.DEFAULT_DISPLAY || sameNameAsDefault || (flags and rejected) == 0
     return builtIn && state != Display.STATE_OFF && state != Display.STATE_UNKNOWN
 }

@@ -141,7 +141,9 @@ be captured and the effect simply doesn't play there.
   change plays a ~0.5 s ease instead (frost in on leaving rest, frost out
   once the other panel lights up). **Tune** says so when it detects one,
   and **Copy sensor report** dumps every hinge-related sensor for a bug
-  report. Fold 8 and the Pixel Folds expose a continuous angle.
+  report. Measured on a Galaxy Z Fold 8 (Android 17): its public
+  `hinge_angle` is also stops-only (0 / 90 / 180), so this applies to Fold 8
+  too. The Pixel Folds expose a continuous angle.
 
 ## Build
 
@@ -180,6 +182,23 @@ wallpaper/WallpaperImage.kt               picked image / generated default
 ui/                                       Compose app: preview, Tune sheet, restricted-settings guide
 settings/DuoSettings.kt                   shared tuning (SharedPreferences + StateFlow)
 ```
+
+## Galaxy Z Fold 8 notes
+
+- Measured 2026-09-26 (SM-F971B, Android 17). Two separate logical displays:
+  0 is the cover (1248×1972); 1 is the inner panel (2448×1848), flagged
+  `FLAG_PRESENTATION` and **off** whenever the phone is closed. On a normal
+  open the OS turns the cover off and puts the inner panel under display 0,
+  exactly like the OnePlus — the phone does *not* keep both screens on while
+  you fold it. Its `CONCURRENT_INNER/OUTER_DEFAULT` device states exist but
+  are only entered when an app asks for dual-screen (camera cover preview,
+  Interpreter); the service accepts the second built-in display when that
+  happens (it matches the default display's name, "Built-in Screen").
+- Public `hinge_angle` reports only 0 / 90 / 180, so the fold plays as timed
+  eases per stop: cover frosts in at the first 90° event, the inner panel
+  lights ~0.5 s later and its capture takes ~0.2–0.3 s, then it clears.
+- One UI has SurfaceFlinger window blur disabled, so **Live blur** is greyed
+  out; Snapshot only.
 
 ## OnePlus Open notes
 
