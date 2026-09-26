@@ -110,10 +110,14 @@ Full edition:
      `adb uninstall com.duoopen; adb install DuoOpen-<version>.apk`
 3. Fold the phone partway and open it. **Tune → Test it now** replays the
    effect without folding.
+4. Optional, recommended on Samsung: install [Shizuku](https://shizuku.rikka.app/),
+   start it (wireless debugging or a computer — once per boot), then
+   **Tune → Shizuku mode → Authorise**. See *Shizuku mode* below for what it
+   unlocks and the wallpaper it needs for the continuous hinge angle.
 
 The **Tune** sheet has strength, frost, darkening, eye distance, which half
-moves (left/right/both), which edge the cover-screen frost comes from, and
-a hinge simulator.
+moves (left/right/both), which edge the cover-screen frost comes from, the
+Shizuku switches, and a hinge simulator.
 
 Wallpaper-only mode: **Set live wallpaper** in the app (home + lock screen).
 Only the wallpaper folds in that mode; icons stay sharp.
@@ -125,6 +129,14 @@ phase starts and keeps it in memory only while the overlay is on screen.
 Nothing is stored, logged or sent anywhere; the app has no network
 permission. Screens the system marks secure (banking apps, DRM video) can't
 be captured and the effect simply doesn't play there.
+
+With **Shizuku mode** on, a helper process running with ADB (shell)
+privileges does the capturing instead — again only into memory, only while
+the fold plays, and it refuses frames that contain secure content. For the
+Samsung continuous angle it also tails the system log, but only for lines
+from Samsung's fold wallpaper (`logcat -s SprWallpaper|FoldInteractive`);
+nothing else is read. Both helpers exit when the service stops, and none of
+it runs unless you authorise Duo Open in Shizuku.
 
 ## Known limits
 
