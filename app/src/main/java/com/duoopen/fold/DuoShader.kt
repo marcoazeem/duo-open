@@ -1,9 +1,6 @@
 package com.duoopen.fold
 
 import android.content.Context
-import android.graphics.RuntimeShader
-import android.util.Log
-import com.duoopen.R
 import com.duoopen.settings.DuoConfig
 
 /** Where the hinge sits in a given surface, and how the eye looks at it. */
@@ -18,7 +15,46 @@ data class FoldLine(
     val movingSide: Int? = null,
 )
 
-/** Shared glue for res/raw/duo_unfold.agsl — used by the app, wallpaper and overlay. */
+/**
+ * Every uniform of the fold shader, in the shader's own units (render px,
+ * degrees). One value drives both backends: AGSL on API 33+ ([AgslFold]) and
+ * OpenGL ES below ([com.duoopen.fold.gl.GlFoldRenderer]).
+ */
+data class FoldUniforms(
+    val width: Float,
+    val height: Float,
+    val tiltDegrees: Float,
+    val eyeDistancePx: Float,
+    val hingePos: Float,
+    val eyeX: Float,
+    /** 0 = hinge is a vertical line (splits x), 1 = horizontal. */
+    val axisSwap: Float,
+    /** -1 = left/top half moves, +1 = right/bottom, 0 = both. */
+    val paneSide: Float,
+    val blurSpread: Float,
+    val darkening: Float,
+) {
+    /**
+     * The same fold for a target [k] times the size (k = 0.5: half
+     * resolution). Lengths scale by k; darkening is per px, so it scales by
+     * 1/k; blurSpread is px per px and stays.
+     */
+    fun scaledBy(k: Float) = copy(
+        width = width * k,
+        height = height * k,
+        eyeDistancePx = eyeDistancePx * k,
+        hingePos = hingePos * k,
+        eyeX = eyeX * k,
+        darkening = darkening / k,
+    )
+}
+
+/**
+ * Fold geometry shared by the app, wallpaper and overlay: hinge angle to pane
+ * tilt, where the hinge sits, and the shader uniforms. Backend-free; the
+ * shader itself is res/raw/duo_unfold.agsl ([AgslFold], API 33+) or
+ * res/raw/duo_unfold.frag (OpenGL ES, below 33).
+ */
 object DuoShader {
     /** Pane tilt cap; beyond this the kernel is mostly black anyway. */
     const val MAX_TILT = 45f
@@ -39,23 +75,8 @@ object DuoShader {
     /** A closed OnePlus Open idles anywhere from 0° to ~5°; below this the cover counts as at rest. */
     const val CLOSED_HINGE = 6f
 
-    private const val TAG = "DuoShader"
-    private const val REFERENCE_PX_PER_MM = 6f
-
-    @Volatile
-    private var source: String? = null
-
-    fun create(context: Context): RuntimeShader? {
-        val src = source ?: context.resources.openRawResource(R.raw.duo_unfold)
-            .bufferedReader().use { it.readText() }
-            .also { source = it }
-        return try {
-            RuntimeShader(src)
-        } catch (e: Exception) {
-            Log.e(TAG, "AGSL compile failed: ${e.message}", e)
-            null
-        }
-    }
+    /** The original's density; [DuoConfig.darkening] is authored against it. */
+    const val REFERENCE_PX_PER_MM = 6f
 
     /**
      * Moving-pane tilt on the inner panel. The physical swing far exceeds what
@@ -123,25 +144,29 @@ object DuoShader {
         return if (xdpi.isFinite() && xdpi > 0f) xdpi / 25.4f else REFERENCE_PX_PER_MM
     }
 
-    fun setUniforms(
-        shader: RuntimeShader,
+    /**
+     * The shader uniforms for a [width] x [height] render target in px.
+     * [pxPerMm] is in the same px, so a half-resolution target passes half.
+     */
+    fun uniforms(
         width: Float,
         height: Float,
         tiltDegrees: Float,
         config: DuoConfig,
         pxPerMm: Float,
         fold: FoldLine,
-    ) {
-        shader.setFloatUniform("resolution", width, height)
-        shader.setFloatUniform("tiltDegrees", tiltDegrees)
-        shader.setFloatUniform("eyeDistancePx", config.eyeDistanceMm * pxPerMm)
-        shader.setFloatUniform("hingePos", fold.position)
-        shader.setFloatUniform("eyeX", fold.eyePos)
-        shader.setFloatUniform("axisSwap", if (fold.splitsX) 0f else 1f)
-        shader.setFloatUniform("paneSide", (fold.movingSide ?: config.movingSide).toFloat())
-        shader.setFloatUniform("blurSpread", config.blurSpread)
+    ) = FoldUniforms(
+        width = width,
+        height = height,
+        tiltDegrees = tiltDegrees,
+        eyeDistancePx = config.eyeDistanceMm * pxPerMm,
+        hingePos = fold.position,
+        eyeX = fold.eyePos,
+        axisSwap = if (fold.splitsX) 0f else 1f,
+        paneSide = (fold.movingSide ?: config.movingSide).toFloat(),
+        blurSpread = config.blurSpread,
         // Blur radius is in device px; renormalize the per-px darkening from the
         // original's ~6 px/mm so dense panels don't crush to black.
-        shader.setFloatUniform("darkening", config.darkening * REFERENCE_PX_PER_MM / pxPerMm)
-    }
+        darkening = config.darkening * REFERENCE_PX_PER_MM / pxPerMm,
+    )
 }

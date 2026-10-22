@@ -4,6 +4,7 @@ import android.app.WallpaperManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -30,12 +31,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.duoopen.DualScreen
+import com.duoopen.fold.AgslFold
 import com.duoopen.fold.DuoShader
 import com.duoopen.fold.FoldLine
 import com.duoopen.fold.HingeAngleSource
@@ -70,7 +73,7 @@ fun DuoApp(foldLineFlow: StateFlow<FoldLine?>, dualScreen: DualScreen? = null) {
     val angle = if (simulate || hinge.sensor == null) simulatedAngle else hingeAngle
     // Re-read the panel on every configuration change (the fold swaps panels).
     LocalConfiguration.current
-    val onCover = !simulate && hinge.sensor != null && !context.display.isInnerPanel()
+    val onCover = !simulate && hinge.sensor != null && !context.display.isInnerPanel(context)
     val targetTilt = if (angle.isNaN() || onCover) 0f else DuoShader.tiltForHinge(angle, config)
     val paneTilt by animateFloatAsState(
         targetValue = targetTilt,
@@ -78,7 +81,8 @@ fun DuoApp(foldLineFlow: StateFlow<FoldLine?>, dualScreen: DualScreen? = null) {
         label = "paneTilt",
     )
 
-    val shader = remember { DuoShader.create(context) }
+    // AGSL on 33+; below that the preview warps the wallpaper image through GL.
+    val shader = remember { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) AgslFold.create(context) else null }
     val pxPerMm = remember(context) { DuoShader.pxPerMm(context) }
     val image by produceState<ImageBitmap?>(null, config.imageVersion) {
         value = withContext(Dispatchers.IO) {
@@ -115,6 +119,10 @@ fun DuoApp(foldLineFlow: StateFlow<FoldLine?>, dualScreen: DualScreen? = null) {
 
     var showSheet by remember { mutableStateOf(false) }
 
+    // Android 11/12: no RenderEffect shader, so the wallpaper image alone goes
+    // through the OpenGL ES fold behind the (crisp) preview UI.
+    val glImage = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) image?.asAndroidBitmap() else null
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         HomePreview(
             image = image,
@@ -124,7 +132,21 @@ fun DuoApp(foldLineFlow: StateFlow<FoldLine?>, dualScreen: DualScreen? = null) {
             wallpaperActive = wallpaperActive,
             onSetWallpaper = setWallpaper,
             onTune = { showSheet = true },
-            modifier = if (shader != null && !overlayRunning) {
+            background = if (glImage != null) {
+                {
+                    GlFoldPreview(
+                        image = glImage,
+                        tilt = if (overlayRunning) 0f else paneTilt,
+                        config = config,
+                        pxPerMm = pxPerMm,
+                        fold = foldLine,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            } else {
+                null
+            },
+            modifier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && shader != null && !overlayRunning) {
                 Modifier.foldEffect(shader, { paneTilt }, config, pxPerMm, foldLine)
             } else {
                 Modifier

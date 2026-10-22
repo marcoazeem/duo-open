@@ -9,11 +9,13 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Shader
+import android.os.Build
 import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
+import androidx.annotation.RequiresApi
 import com.duoopen.fold.DuoShader
 import com.duoopen.fold.FoldLine
 import com.duoopen.settings.DuoConfig
@@ -113,8 +115,9 @@ class SnapshotSurface(
  * whole window by one radius, so the frost gradient is approximated with
  * [STRIPS] strip windows from the crease outward, each blurred by the radius
  * the shader would use at its centre, and darkened with a gradient painted
- * on top. Perspective isn't reproduced.
+ * on top. Perspective isn't reproduced. Cross-window blur is Android 12+.
  */
+@RequiresApi(Build.VERSION_CODES.S)
 class LiveBlurSurface(
     context: Context,
     private val windowManager: WindowManager,

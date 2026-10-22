@@ -1,6 +1,7 @@
 package com.duoopen.overlay
 
 import android.content.Context
+import android.os.Build
 import android.view.WindowManager
 import com.duoopen.shell.ShizukuBridge
 import com.duoopen.shell.WallpaperAngleFeed
@@ -30,10 +31,11 @@ object OverlayFeature {
 
     fun isEnabled(context: Context): Boolean = FoldOverlayService.isEnabled(context)
 
-    /** Whether the system will blur behind our windows (the "live blur" engine). */
+    /** Whether the system will blur behind our windows (the "live blur" engine, Android 12+). */
     fun liveBlurSupported(context: Context): Boolean =
-        runCatching { context.getSystemService(WindowManager::class.java)?.isCrossWindowBlurEnabled == true }
-            .getOrDefault(false)
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            runCatching { context.getSystemService(WindowManager::class.java)?.isCrossWindowBlurEnabled == true }
+                .getOrDefault(false)
 
     /** Replays the effect over the current screen; false if the service isn't connected. */
     fun playDemo(): Boolean {

@@ -51,6 +51,9 @@ private val Dim = Color.White.copy(alpha = 0.72f)
  * The surface under the fold in the app: wallpaper image plus a lock-screen
  * style clock, a live hinge readout and a few crisp shapes so the frost and
  * perspective read clearly.
+ *
+ * @param background Replaces the plain [image] (Android 11/12: the image
+ *   through the OpenGL ES fold, see [GlFoldPreview]).
  */
 @Composable
 fun HomePreview(
@@ -62,9 +65,12 @@ fun HomePreview(
     onSetWallpaper: () -> Unit,
     onTune: () -> Unit,
     modifier: Modifier = Modifier,
+    background: (@Composable () -> Unit)? = null,
 ) {
     Box(modifier.fillMaxSize().background(Color(0xFF0D0A1C))) {
-        if (image != null) {
+        if (background != null) {
+            background()
+        } else if (image != null) {
             Image(
                 bitmap = image,
                 contentDescription = null,

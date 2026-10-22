@@ -19,8 +19,10 @@ android {
 
     defaultConfig {
         applicationId = "com.duoopen"
-        // AGSL RuntimeShader needs API 33 (OnePlus Open ships Android 13+).
-        minSdk = 33
+        // API 30 = AccessibilityService.takeScreenshot + TYPE_HINGE_ANGLE
+        // (Surface Duo 1 runs 12L / API 32). The fold shader is AGSL on 33+
+        // and OpenGL ES below (fold/gl); see AgslFold and GlFoldRenderer.
+        minSdk = 30
         targetSdk = 35
         versionCode = 4
         versionName = "1.3.0"

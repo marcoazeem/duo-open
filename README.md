@@ -2,12 +2,15 @@
 
 The iPhone "Duo" frosted-glass fold, playing system-wide on a book-style
 foldable as you open and close it. Driven by the real hinge angle — no root.
-Built and tested on the OnePlus Open; should work on other Android 13+
-foldables with a hinge sensor (Pixel Fold, Galaxy Z Fold, OPPO Find N…) but
-those are untested — reports welcome.
+Built and tested on the OnePlus Open, and on the Microsoft Surface Duo
+(Android 12L; see *Surface Duo notes*). Should work on other foldables with
+a hinge sensor running Android 11+ (Pixel Fold, Galaxy Z Fold, OPPO Find N…)
+but those are untested — reports welcome.
 
 Based on the AGSL shader from
-[Atomicx7/Duo-animation](https://github.com/Atomicx7/Duo-animation).
+[Atomicx7/Duo-animation](https://github.com/Atomicx7/Duo-animation). Android
+13+ runs it as AGSL; Android 11 and 12 have no AGSL, so there the same
+shader runs as an OpenGL ES port.
 
 ## What it does
 
@@ -99,7 +102,7 @@ Full edition:
 2. Open **Duo Open** → **Tune** → **Turn on in Accessibility** → enable
    *Duo Open full-screen fold*.
    - Android 13+ blocks accessibility for sideloaded apps until you allow
-     it. If the toggle is greyed out: tap it once so Android refuses you,
+     it (Android 11 and 12 don't). If the toggle is greyed out: tap it once so Android refuses you,
      then go to *Settings → Apps → Duo Open → ⋮ (top right) → Allow
      restricted settings* and try again. **Tune → Toggle greyed out?** walks
      through it with deep links.
@@ -156,6 +159,11 @@ it runs unless you authorise Duo Open in Shizuku.
   report. Measured on a Galaxy Z Fold 8 (Android 17): its public
   `hinge_angle` is also stops-only (0 / 90 / 180), so this applies to Fold 8
   too. The Pixel Folds expose a continuous angle.
+- **Android 11 and 12** (Surface Duo): the shader runs as OpenGL ES instead
+  of AGSL. The whole-screen fold and the wallpaper look the same. The in-app
+  preview frosts only its background picture; the clock and cards on top
+  stay sharp. Shizuku's fast capture needs hidden capture classes that
+  Android 12L doesn't have, so it falls back to the accessibility screenshot.
 
 ## Build
 
@@ -172,18 +180,25 @@ Release signing reads `keystore.properties` in the project root
 release build uses the debug key.
 
 Handy adb bits: enable the service with
-`adb shell settings put secure enabled_accessibility_services com.duoopen/com.duoopen.overlay.FoldOverlayService`,
+`adb shell settings put secure enabled_accessibility_services com.duoopen/com.duoopen.overlay.FoldOverlayService`
+(and `adb shell settings put secure accessibility_enabled 1`),
 replay the effect with `adb shell am broadcast -a com.duoopen.DEMO`,
-watch it with `adb logcat -s DuoOverlay`.
+watch it with `adb logcat -s DuoOverlay` (add `DuoGl` for the OpenGL ES
+renderer on Android 11/12). `adb shell settings put global duoopen_test_dual_screen 1`
+makes any device behave as a Surface Duo (one display, motion-driven fold).
 
 ## Layout
 
 ```
-app/src/main/res/raw/duo_unfold.agsl      fold shader (hinge line, moving side, eye)
+app/src/main/res/raw/duo_unfold.agsl      fold shader (hinge line, moving side, eye), Android 13+
+app/src/main/res/raw/duo_unfold_gles.frag the same shader in GLSL ES 3.0, Android 11/12 (keep in sync)
 src/full/…/shell/DuoShellService.kt       Shizuku user service: display capture, wallpaper angle log reader
 src/full/…/shell/ShizukuBridge.kt         app side: state, permission, binder calls
 src/full/…/shell/WallpaperAngleFeed.kt    pings Samsung's fold wallpaper, feeds the continuous angle
 fold/DuoShader.kt                         uniforms, hinge→tilt mapping, fold placement
+fold/AgslFold.kt                          AGSL RuntimeShader glue (API 33+)
+fold/gl/                                  OpenGL ES renderer for the shader (API 30–32)
+fold/DeviceProfile.kt                     dual-screen detection (Surface Duo)
 fold/HingeAngleSource.kt                  hinge sensor picker (vendor fallback, coarse detection, report)
 fold/TiltFollower.kt                      per-vsync ease that hides the sensor's 1° steps
 fold/Panels.kt                            inner vs cover panel from the display mode
@@ -192,9 +207,10 @@ src/full/…/overlay/FoldOverlayService.kt  accessibility service: one engine pe
 src/full/…/overlay/PanelEngine.kt         per-display fold: screenshot + overlay + hinge tracking
 src/full/…/overlay/FoldSurface.kt         snapshot surface, or live-blur strip windows
 src/full/…/overlay/FoldOverlayView.kt     draws the snapshot through the shader (half-res layer)
-wallpaper/DuoWallpaperService.kt          live wallpaper engine
+wallpaper/DuoWallpaperService.kt          live wallpaper engine (Canvas + AGSL, or OpenGL ES)
 wallpaper/WallpaperImage.kt               picked image / generated default
 ui/                                       Compose app: preview, Tune sheet, restricted-settings guide
+ui/GlFoldPreview.kt                       preview background through OpenGL ES (API 30–32)
 settings/DuoSettings.kt                   shared tuning (SharedPreferences + StateFlow)
 ```
 
@@ -222,6 +238,29 @@ settings/DuoSettings.kt                   shared tuning (SharedPreferences + Sta
 - The hinge sensor is wake-up only and sends nothing on registration, goes
   quiet at ~30° during a close, and idles anywhere from 0–5° when shut. The
   service compensates for all three.
+
+## Surface Duo notes
+
+- Measured 2026-10-21 (Surface Duo, Android 12L / API 32). There is one
+  logical display, 0, of 2784×1800 in landscape spanning both 1350×1800
+  screens. The 84 px hinge gap is the strip x = 1350–1434, centred on
+  x = 1392. The display never swaps panels; it switches off when closed.
+- The public `hinge_angle` is continuous (resolution 0.00001°) and reads
+  0–360°. Past 180° (folded back, one screen in use) counts as flat.
+- With no panel swap, the fold is driven by motion. The pose the screens
+  light up in is the rest pose. Moving the hinge a few degrees from it
+  starts the effect, which then follows your hand. When you stop (book or
+  tent posture) it fades after ~1 s and re-arms from there. Opening to flat
+  clears it.
+- Both halves move by default and the crease is the middle of the long
+  side, so it's vertical at x = 1392 when spanned in landscape.
+- SurfaceFlinger window blur is on, so **Live blur** works.
+- No AGSL on Android 12L: the overlay, the wallpaper and the preview use the
+  OpenGL ES port of the shader (Adreno 640). The frost renders at half
+  resolution and is scaled up, as on the other phones.
+- With the app on one screen there's no fold feature to read, so the in-app
+  preview centres its crease in its own window. The whole-screen fold and
+  the wallpaper aren't affected.
 
 ## Related projects
 

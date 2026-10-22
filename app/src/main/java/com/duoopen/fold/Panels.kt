@@ -1,5 +1,6 @@
 package com.duoopen.fold
 
+import android.content.Context
 import android.view.Display
 import kotlin.math.max
 import kotlin.math.min
@@ -18,6 +19,17 @@ fun Display?.isInnerPanel(): Boolean {
     val b = mode.physicalHeight.toFloat()
     if (a <= 0f || b <= 0f) return false
     return max(a, b) / min(a, b) < INNER_MAX_ASPECT
+}
+
+/**
+ * [isInnerPanel], aware of [DeviceProfile]: on a dual-screen device the
+ * default display spans both screens (Surface Duo 1: 2784x1800, aspect 1.55,
+ * which the aspect test would call a cover screen) and is always the panel
+ * that folds.
+ */
+fun Display?.isInnerPanel(context: Context): Boolean {
+    if (this != null && displayId == Display.DEFAULT_DISPLAY && DeviceProfile.isDualScreen(context)) return true
+    return isInnerPanel()
 }
 
 /**

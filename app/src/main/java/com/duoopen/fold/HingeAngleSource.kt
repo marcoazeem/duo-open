@@ -13,6 +13,7 @@ import kotlin.math.roundToInt
 
 /**
  * Reports the foldable's hinge angle in degrees (0 = closed, 180 = flat).
+ * Readings past flat (a Surface Duo folded back, 180..360) are reported as 180.
  *
  * Every sensor that looks like a real hinge *angle* is registered — the
  * platform `TYPE_HINGE_ANGLE` (non-wake-up first) plus vendor sensors that
@@ -195,13 +196,17 @@ class HingeAngleSource(
             externalActive = false
         }
         // Not an angle in degrees (state code, radians, normalized): ignore.
-        if (!value.isFinite() || value < -PLAUSIBLE_SLACK || value > 180f + PLAUSIBLE_SLACK) return
+        // The platform hinge type is defined over 0..360 — a Surface Duo folds
+        // back past flat — while vendor sensors are only trusted to ~180.
+        val maxAngle = if (stats.isStandard) 360f else 180f
+        if (!value.isFinite() || value < -PLAUSIBLE_SLACK || value > maxAngle + PLAUSIBLE_SLACK) return
         stats.observe(value)
         if (choose() !== stats) return
 
         val now = SystemClock.uptimeMillis()
         lastEventUptime = now
         tickRate(now)
+        // Folded back past flat (one screen in use) is a rest pose: report it as flat.
         lastAngle = value.coerceIn(0f, 180f)
         onAngle(lastAngle)
     }

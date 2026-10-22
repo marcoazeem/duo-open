@@ -3,6 +3,7 @@ package com.duoopen.settings
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import com.duoopen.fold.DeviceProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,8 +20,12 @@ import kotlinx.coroutines.flow.asStateFlow
  * @param foldSplitsLong Whether the fold line splits the display's longer side.
  *   Learned from Jetpack WindowManager while the app is open, so the wallpaper
  *   (which can't query fold features) puts the hinge in the right place.
+ *   Defaults to true on a dual-screen device ([DeviceProfile]), whose hinge
+ *   always splits the long side of the spanned display.
  * @param movingSide Which half swings while the other is held still:
  *   -1 = left (top when the fold is horizontal), +1 = right (bottom), 0 = both.
+ *   Defaults to 0 on a dual-screen device, where you hold the spine and both
+ *   screens move.
  * @param coverFrostFromRight On the cover screen, frost grows from the right
  *   edge (hinge on the left); false mirrors it.
  * @param liveBlur Full-screen fold draws with the system's window blur on the
@@ -60,7 +65,7 @@ object DuoSettings {
 
     fun init(context: Context) {
         prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val d = DuoConfig()
+        val d = defaults(context)
         _config.value = DuoConfig(
             intensity = prefs.getFloat("intensity", d.intensity),
             blurSpread = prefs.getFloat("blurSpread", d.blurSpread),
@@ -76,6 +81,10 @@ object DuoSettings {
             imageVersion = prefs.getLong("imageVersion", d.imageVersion),
         )
     }
+
+    /** Factory defaults for this device; saved preferences override them. */
+    private fun defaults(context: Context): DuoConfig =
+        if (DeviceProfile.isDualScreen(context)) DuoConfig(foldSplitsLong = true, movingSide = 0) else DuoConfig()
 
     fun update(transform: (DuoConfig) -> DuoConfig) {
         val next = transform(_config.value)

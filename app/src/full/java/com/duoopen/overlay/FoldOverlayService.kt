@@ -15,6 +15,7 @@ import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
+import androidx.core.content.ContextCompat
 import com.duoopen.fold.HingeAngleSource
 import com.duoopen.fold.isLivePanel
 import com.duoopen.settings.DuoSettings
@@ -63,7 +64,7 @@ class FoldOverlayService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         if (!receiverRegistered) {
-            registerReceiver(demoReceiver, IntentFilter(ACTION_DEMO), RECEIVER_EXPORTED)
+            ContextCompat.registerReceiver(this, demoReceiver, IntentFilter(ACTION_DEMO), ContextCompat.RECEIVER_EXPORTED)
             receiverRegistered = true
         }
         displayManager = getSystemService(DisplayManager::class.java)
